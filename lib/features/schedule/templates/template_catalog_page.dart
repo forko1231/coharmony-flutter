@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import '../../../models/custody_models.dart';
 import '../../../services/custody_templates/custody_template.dart';
 import '../../../services/custody_templates/template_registry.dart';
 import '../../../theme/app_colors.dart';
 import '../../../theme/app_palette.dart';
 import '../../../widgets/app_header.dart';
+import '../../onboarding/proposal_preview_grid.dart';
 import 'template_config_page.dart';
 
 /// Template catalog — port of `TemplateCatalogPage.xaml(.cs)`. Cards are grouped by
@@ -69,9 +71,44 @@ class _TemplateCard extends StatelessWidget {
   const _TemplateCard({required this.template});
   final CustodyTemplate template;
 
+  /// Builds a representative pattern for the card preview by answering every
+  /// question with its default (or a sensible fallback per question type), so the
+  /// mini-grid shows the template's shape before the user configures it.
+  List<ProposalDayDto> _previewDays() {
+    final answers = TemplateAnswers();
+    for (final q in template.questions) {
+      switch (q.type) {
+        case QuestionType.parentChoice:
+          answers[q.id] = q.defaultValue ?? q.optionAValue ?? 'Husband';
+          break;
+        case QuestionType.timeOfDay:
+          answers[q.id] = q.defaultValue ?? '17:00';
+          break;
+        case QuestionType.dayOfWeek:
+          answers[q.id] = q.defaultValue ?? '0';
+          break;
+      }
+    }
+    try {
+      return [
+        for (final g in template.buildPattern(answers))
+          ProposalDayDto(
+            weekIndex: g.weekIndex,
+            dayIndex: g.dayIndex,
+            parentAssignment: g.parentAssignment,
+            transferTime: g.transferTime,
+            transferEndTime: g.transferEndTime,
+          ),
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final preview = _previewDays();
     return GestureDetector(
       onTap: () {
         Navigator.of(context).push(
@@ -90,28 +127,39 @@ class _TemplateCard extends StatelessWidget {
                 blurRadius: 12),
           ],
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(template.name,
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: palette.textPrimary)),
-                  const SizedBox(height: 4),
-                  Text(template.shortDescription, style: TextStyle(fontSize: 13, color: palette.textSecondary)),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(color: AppColors.iconBgBlue, borderRadius: BorderRadius.circular(8)),
-                    child: Text('${template.patternLengthWeeks}-week pattern',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primaryBlue)),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(template.name,
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                      const SizedBox(height: 4),
+                      Text(template.shortDescription, style: TextStyle(fontSize: 13, color: palette.textSecondary)),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration:
+                            BoxDecoration(color: AppColors.iconBgBlue, borderRadius: BorderRadius.circular(8)),
+                        child: Text('${template.patternLengthWeeks}-week pattern',
+                            style: const TextStyle(
+                                fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primaryBlue)),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 12),
+                Text('›', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: palette.textSecondary)),
+              ],
             ),
-            const SizedBox(width: 12),
-            Text('›', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: palette.textSecondary)),
+            if (preview.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              ProposalPreviewGrid(patternLength: template.patternLengthWeeks, days: preview),
+            ],
           ],
         ),
       ),

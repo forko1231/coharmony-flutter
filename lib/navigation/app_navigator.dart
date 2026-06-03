@@ -31,7 +31,7 @@ Widget pageForOnboarding(OnboardingDestination dest) {
     case OnboardingDestination.scheduleSent:
       return const ScheduleSentPage();
     case OnboardingDestination.subscription:
-      return const SubscriptionPage();
+      return const SubscriptionPage(isOnboarding: true);
     case OnboardingDestination.tour:
       return const TourPage();
     case OnboardingDestination.mainApp:

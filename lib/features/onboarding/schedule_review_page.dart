@@ -9,6 +9,7 @@ import '../../theme/app_palette.dart';
 import '../../widgets/hero_orb.dart';
 import '../schedule/custody_schedule_page.dart';
 import 'onboarding_step_header.dart';
+import 'proposal_preview_grid.dart';
 
 /// Onboarding step 2 — review a co-parent's proposed schedule — port of
 /// `OnboardingScheduleReviewPage.xaml(.cs)`.
@@ -242,7 +243,11 @@ class _ScheduleReviewPageState extends State<ScheduleReviewPage> {
                                   ],
                                 ),
                                 const SizedBox(height: 16),
-                                // PreviewContainer — week rows rendered by the shared proposal-preview widget (schedule pass).
+                                if (_proposal != null)
+                                  ProposalPreviewGrid(
+                                    patternLength: _proposal!.patternLength,
+                                    days: _proposal!.days,
+                                  ),
                               ],
                             ),
                           ),

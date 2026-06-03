@@ -14,6 +14,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
 import '../../widgets/app_icon.dart';
 import '../messaging/chat_interface_page.dart';
+import '../onboarding/proposal_preview_grid.dart';
 import '../schedule/custody_schedule_page.dart';
 import '../schedule/templates/template_config_page.dart';
 
@@ -494,7 +495,6 @@ class _AiChatPageState extends State<AiChatPage> {
   Widget _messageList(BuildContext context) {
     final palette = context.palette;
     return ListView.separated(
-      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.all(16),
       itemCount: _items.length + (_sending ? 1 : 0),
       separatorBuilder: (_, _) => const SizedBox(height: 12),
@@ -627,23 +627,20 @@ class _AiChatPageState extends State<AiChatPage> {
       const SizedBox(height: 4),
       Text('${p.patternLengthWeeks}-week pattern', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
       const SizedBox(height: 10),
-      for (int w = 0; w < p.patternLengthWeeks; w++) ...[
-        if (p.patternLengthWeeks > 1)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Text('Week ${w + 1}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: palette.textSecondary)),
-          ),
-        Row(
-          children: [
-            for (int d = 0; d < 7; d++) ...[
-              Expanded(child: _patternCell(p, w, d)),
-              if (d < 6) const SizedBox(width: 3),
-            ],
-          ],
-        ),
-        const SizedBox(height: 6),
-      ],
-      const SizedBox(height: 6),
+      ProposalPreviewGrid(
+        patternLength: p.patternLengthWeeks,
+        days: [
+          for (final d in p.days)
+            ProposalDayDto(
+              weekIndex: d.weekIndex,
+              dayIndex: d.dayIndex,
+              parentAssignment: d.parentAssignment,
+              transferTime: d.transferTime,
+              transferEndTime: d.transferEndTime,
+            ),
+        ],
+      ),
+      const SizedBox(height: 12),
       _cardButtons(
         context,
         'Decline',
@@ -656,24 +653,6 @@ class _AiChatPageState extends State<AiChatPage> {
         item.busy ? () {} : () => onboarding ? _openPatternInEditor(item) : _applyPattern(item),
       ),
     ]);
-  }
-
-  Widget _patternCell(SetCustodyPatternArgs p, int w, int d) {
-    var parent = 'None';
-    for (final day in p.days) {
-      if (day.weekIndex == w && day.dayIndex == d) {
-        parent = day.parentAssignment;
-        break;
-      }
-    }
-    const letters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-    return Container(
-      height: 30,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(color: _parentFill[parent] ?? _parentFill['None'], borderRadius: BorderRadius.circular(6)),
-      child: Text(letters[d],
-          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _parentText[parent] ?? _parentText['None'])),
-    );
   }
 
   Widget _overrideCard(BuildContext context, _OverrideItem item) {

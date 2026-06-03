@@ -1735,6 +1735,10 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
       _selWeek = weekIndex;
       _selDay = dayIndex;
       _dockedEditor = DayEditorView(
+        // Unique key per (week, day) so switching days without closing the sheet
+        // rebuilds the editor State (re-runs initState with the new day's data)
+        // instead of reusing the previous day's stale fields.
+        key: ValueKey('day-$weekIndex-$dayIndex'),
         weekIndex: weekIndex,
         dayIndex: dayIndex,
         title: title,
@@ -1767,6 +1771,7 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
     }
     _showSheet(
       OverrideEditorView(
+        key: ValueKey('override-${existingDateKey ?? 'new'}'),
         existingDateKey: existingDateKey,
         existing: existing,
         baseline: baseline,

@@ -410,6 +410,9 @@ class _MapFilterPopupState extends State<MapFilterPopup> {
 class PinDetailsPopup extends StatelessWidget {
   final String title;
   final String subtitle;
+  final double? lat;
+  final double? lng;
+  final String? address;
   final VoidCallback? onCreateRecord;
   final VoidCallback? onViewRecords;
   final VoidCallback? onNavigate;
@@ -417,6 +420,9 @@ class PinDetailsPopup extends StatelessWidget {
       {super.key,
       required this.title,
       this.subtitle = 'Point of Interest',
+      this.lat,
+      this.lng,
+      this.address,
       this.onCreateRecord,
       this.onViewRecords,
       this.onNavigate});
@@ -424,6 +430,9 @@ class PinDetailsPopup extends StatelessWidget {
   static Future<void> show(BuildContext context,
           {required String title,
           String subtitle = 'Point of Interest',
+          double? lat,
+          double? lng,
+          String? address,
           VoidCallback? onCreateRecord,
           VoidCallback? onViewRecords,
           VoidCallback? onNavigate}) =>
@@ -432,6 +441,9 @@ class PinDetailsPopup extends StatelessWidget {
           builder: (_) => PinDetailsPopup(
               title: title,
               subtitle: subtitle,
+              lat: lat,
+              lng: lng,
+              address: address,
               onCreateRecord: onCreateRecord,
               onViewRecords: onViewRecords,
               onNavigate: onNavigate));
@@ -439,6 +451,9 @@ class PinDetailsPopup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final coords = (lat != null && lng != null)
+        ? '${lat!.toStringAsFixed(6)}, ${lng!.toStringAsFixed(6)}'
+        : null;
     return _DialogShell(
       icon: 'icon_location',
       iconBg: AppColors.iconBgBlue,
@@ -449,13 +464,26 @@ class PinDetailsPopup extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(color: palette.surfaceInput, borderRadius: BorderRadius.circular(12)),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              AppIcon('icon_location', size: 18, color: palette.textSecondary),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text('Tap a button below to record a visit, view its history, or navigate here.',
-                    style: TextStyle(fontSize: 13, color: palette.textSecondary)),
+              if (address?.isNotEmpty ?? false) ...[
+                _metaRow(context, 'icon_home', address!),
+                const SizedBox(height: 10),
+              ],
+              if (coords != null) ...[
+                _metaRow(context, 'icon_location', coords),
+                const SizedBox(height: 10),
+              ],
+              Row(
+                children: [
+                  AppIcon('icon_info', size: 18, color: palette.textSecondary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('Tap a button below to record a visit, view its history, or navigate here.',
+                        style: TextStyle(fontSize: 13, color: palette.textSecondary)),
+                  ),
+                ],
               ),
             ],
           ),
@@ -488,6 +516,23 @@ class PinDetailsPopup extends StatelessWidget {
               }),
             ),
           ],
+        ),
+      ],
+    );
+  }
+
+  Widget _metaRow(BuildContext context, String icon, String value) {
+    final palette = context.palette;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 1),
+          child: AppIcon(icon, size: 18, color: palette.textSecondary),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(value, style: TextStyle(fontSize: 13, color: palette.textPrimary)),
         ),
       ],
     );

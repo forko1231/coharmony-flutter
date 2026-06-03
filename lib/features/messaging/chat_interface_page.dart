@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -80,7 +81,7 @@ class _Msg {
   bool get hasAttachment => attachment != null && attachment!.trim().isNotEmpty;
 }
 
-class _ChatInterfacePageState extends State<ChatInterfacePage> {
+class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindingObserver {
   final _controller = TextEditingController();
   final _scroll = ScrollController();
 
@@ -115,6 +116,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
   static const _typingThrottle = Duration(seconds: 3);
 
   String? _suggestion; // AI tone-check suggested revision
+  int? _toneScore; // AI tone score (0–10) accompanying a suggested revision
 
   StreamSubscription<MessageReceivedEvent>? _recvSub;
   StreamSubscription<MessagesReadEvent>? _readSub;
@@ -131,11 +133,66 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
     if (widget.draftMessage?.isNotEmpty ?? false) _controller.text = widget.draftMessage!;
     _controller.addListener(_onTextChanged);
     _scroll.addListener(_onScroll);
+    WidgetsBinding.instance.addObserver(this);
     _init();
   }
 
   @override
+  void didChangeMetrics() {
+    // When the keyboard opens (or its height changes), keep the latest messages
+    // visible by scrolling to the bottom as the list shrinks above the keyboard.
+    final inset = WidgetsBinding.instance.platformDispatcher.views.first.viewInsets.bottom;
+    if (inset > 0) _scrollToBottom();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The socket may have dropped while backgrounded (and reconnect attempts can
+    // exhaust). On resume, re-establish it and pull anything that arrived offline.
+    if (state == AppLifecycleState.resumed) _resync();
+  }
+
+  Future<void> _resync() async {
+    await ServiceLocator.messaging.initializeWebSocket();
+    if (!mounted) return;
+    unawaited(ServiceLocator.messaging.markMessagesAsRead(_recipient).catchError((_) => 0));
+    await _mergeLatest();
+  }
+
+  /// Fetches the newest page and appends only messages we aren't already showing
+  /// — non-destructive (keeps pagination + any in-flight optimistic bubble).
+  Future<void> _mergeLatest() async {
+    try {
+      final raw = await ServiceLocator.messaging.getContactMessages(_recipient, page: 1, pageSize: _pageSize);
+      final fresh = raw.where((m) => !_displayedIds.contains(m.messageId)).toList();
+      if (fresh.isEmpty) return;
+      final add = <_Msg>[];
+      for (final m in fresh) {
+        add.add(_Msg(
+          messageId: m.messageId,
+          sender: m.sender,
+          receiver: m.receiver,
+          attachment: m.attachment,
+          text: m.message.isEmpty ? '' : await _decrypt(m),
+          timestamp: m.timestamp,
+          isRead: m.isRead,
+          readAt: m.readAt,
+        ));
+      }
+      if (!mounted) return;
+      setState(() {
+        _messages.addAll(add);
+        _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        _displayedIds.addAll(add.map((m) => m.messageId));
+        _recomputeDeliveryStatus();
+      });
+      _scrollToBottom();
+    } catch (_) {/* non-fatal */}
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     AppNavigation.inChat = false;
     _recvSub?.cancel();
     _readSub?.cancel();
@@ -241,6 +298,24 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
     final between = (e.sender == _recipient && e.receiver == _me) ||
         (e.sender == _me && e.receiver == _recipient);
     if (!between || _displayedIds.contains(e.messageId)) return;
+
+    // The server echoes our OWN sent message over the socket too, and that echo
+    // can beat the HTTP send response. Reconcile it against the still-optimistic
+    // bubble (temp negative id, "sending") instead of appending a duplicate.
+    if (e.sender == _me) {
+      final idx = _messages.indexWhere(
+          (m) => m.sending && m.messageId < 0 && m.text == e.message);
+      if (idx >= 0) {
+        setState(() {
+          _messages[idx].messageId = e.messageId;
+          _messages[idx].sending = false;
+          if (e.attachment != null) _messages[idx].attachment = e.attachment;
+          _displayedIds.add(e.messageId);
+          _recomputeDeliveryStatus();
+        });
+        return;
+      }
+    }
     // WebSocket payloads are already plaintext (server-decrypted) — do NOT decrypt.
     setState(() {
       _messages.add(_Msg(
@@ -363,7 +438,10 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
           break;
         case 'bad_tone':
           rollback();
-          setState(() => _suggestion = response.suggested);
+          setState(() {
+            _suggestion = response.suggested;
+            _toneScore = response.tonescore;
+          });
           break;
         default:
           rollback();
@@ -450,6 +528,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
     // appended after the last bubble inside the list.
     return Scaffold(
       backgroundColor: palette.surface,
+      resizeToAvoidBottomInset: true,
       body: Column(
         children: [
           _header(context),
@@ -463,15 +542,19 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
                   ? const Center(child: CircularProgressIndicator())
                   : ListView.builder(
                       controller: _scroll,
-                      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                       padding: const EdgeInsets.all(16),
                       // Messages, then a trailing footer row (delivery status +
                       // typing bubble) when either is present.
                       itemCount: _messages.length + ((_deliveryStatus != null || _partnerTyping) ? 1 : 0),
                       itemBuilder: (_, i) {
                         if (i < _messages.length) {
+                          // Tighten the gap below the last bubble when the delivery
+                          // status line is rendered right under it.
+                          final lastWithStatus = i == _messages.length - 1 &&
+                              _deliveryStatus != null &&
+                              !_partnerTyping;
                           return Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
+                            padding: EdgeInsets.only(bottom: lastWithStatus ? 2 : 12),
                             child: _bubble(context, _messages[i]),
                           );
                         }
@@ -624,6 +707,22 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
     final name = _attachmentFileName(m);
     final isImage = _isImageName(name);
     final fg = outgoing ? Colors.white : palette.textPrimary;
+    // Image attachments (already on the server) show a lazy-loaded thumbnail
+    // instead of a generic icon — the bytes are cached + reused by the viewer.
+    if (isImage && !m.sending) {
+      return GestureDetector(
+        onTap: () => _onAttachmentTapped(m),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: _AttachmentThumb(
+            key: ValueKey('thumb_${m.messageId}'),
+            load: () => _downloadAttachmentBytes(m),
+            placeholderColor: (outgoing ? Colors.white : palette.textSecondary).withValues(alpha: 0.15),
+            iconColor: fg,
+          ),
+        ),
+      );
+    }
     return GestureDetector(
       onTap: () => _onAttachmentTapped(m),
       child: Container(
@@ -761,22 +860,47 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
   }
 
   Future<void> _saveAttachmentToVault(String name, List<int> bytes) async {
+    // Let the user choose the destination folder in the vault (mirrors MAUI's
+    // folder-picker), defaulting to the root if they don't drill in.
+    if (!mounted) return;
+    final folder = await Navigator.of(context).push<String>(
+        MaterialPageRoute(builder: (_) => const FileVaultPage(pickFolder: true)));
+    if (folder == null) return; // cancelled
     try {
-      final base = await getApplicationSupportDirectory();
-      final vault = Directory(p.join(base.path, 'PrivateLocker'));
-      if (!await vault.exists()) await vault.create(recursive: true);
-      var dest = p.join(vault.path, name);
-      // Avoid clobbering an existing file.
+      final dir = Directory(folder);
+      if (!await dir.exists()) await dir.create(recursive: true);
+      var dest = p.join(folder, name);
       if (await File(dest).exists()) {
-        final stem = p.basenameWithoutExtension(name);
-        final ext = p.extension(name);
-        dest = p.join(vault.path, '$stem-${DateTime.now().millisecondsSinceEpoch}$ext');
+        // Ask whether to replace, matching MAUI's overwrite prompt.
+        final overwrite = await _confirmOverwrite(name);
+        if (overwrite == null) return; // cancelled
+        if (!overwrite) {
+          final stem = p.basenameWithoutExtension(name);
+          final ext = p.extension(name);
+          dest = p.join(folder, '$stem-${DateTime.now().millisecondsSinceEpoch}$ext');
+        }
       }
       await File(dest).writeAsBytes(bytes, flush: true);
       if (mounted) await _alert('Saved', 'Saved to your File Vault.');
     } catch (e) {
       if (mounted) await _alert('Error', 'Could not save to vault: $e');
     }
+  }
+
+  /// Returns true=replace, false=keep both, null=cancel.
+  Future<bool?> _confirmOverwrite(String name) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('File Exists'),
+        content: Text('"$name" already exists in this folder. Replace it?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Keep Both')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Replace')),
+        ],
+      ),
+    );
   }
 
   /// Compose: pick an attachment for the next message. Mirrors MAUI's
@@ -858,7 +982,20 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
       color: context.isDark ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6),
       child: Row(
         children: [
-          AppIcon(isImage ? 'icon_image' : 'icon_document', size: 20, color: palette.textSecondary),
+          if (isImage && _pendingAttachmentBase64 != null)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.memory(
+                base64Decode(_pendingAttachmentBase64!),
+                width: 40,
+                height: 40,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) =>
+                    AppIcon('icon_image', size: 20, color: palette.textSecondary),
+              ),
+            )
+          else
+            AppIcon(isImage ? 'icon_image' : 'icon_document', size: 20, color: palette.textSecondary),
           const SizedBox(width: 10),
           Expanded(
             child: Text(name,
@@ -896,19 +1033,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
                 bottomRight: Radius.circular(18),
               ),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var i = 0; i < 3; i++) ...[
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(color: palette.textSecondary, shape: BoxShape.circle),
-                  ),
-                  if (i < 2) const SizedBox(width: 6),
-                ],
-              ],
-            ),
+            child: _TypingDots(color: palette.textSecondary),
           ),
         ],
       ),
@@ -924,7 +1049,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Suggested revision',
+          Text(_toneScore != null ? 'Suggested revision · Tone score: $_toneScore/10' : 'Suggested revision',
               style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
@@ -1025,6 +1150,121 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Three dots that fade up and down in sequence — an animated "typing…" indicator
+/// (replaces the static dots, the Flutter upgrade over MAUI's still bubble).
+class _TypingDots extends StatefulWidget {
+  const _TypingDots({required this.color});
+  final Color color;
+
+  @override
+  State<_TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<_TypingDots> with SingleTickerProviderStateMixin {
+  late final AnimationController _c =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, _) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < 3; i++) ...[
+            // Each dot's phase is offset by 1/3 so the wave travels left→right.
+            Builder(builder: (_) {
+              final phase = (_c.value - i * 0.2) % 1.0;
+              final t = (1 - (phase * 2 - 1).abs()).clamp(0.0, 1.0); // triangle 0→1→0
+              return Opacity(
+                opacity: 0.3 + 0.7 * t,
+                child: Transform.translate(
+                  offset: Offset(0, -3 * t),
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+                  ),
+                ),
+              );
+            }),
+            if (i < 2) const SizedBox(width: 6),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Lazily downloads + decrypts an image attachment and shows it as a rounded
+/// thumbnail (with a loading placeholder / icon fallback). Used inline in chat
+/// bubbles so image attachments preview instead of showing a generic icon.
+class _AttachmentThumb extends StatefulWidget {
+  const _AttachmentThumb({super.key, required this.load, required this.placeholderColor, required this.iconColor});
+  final Future<List<int>?> Function() load;
+  final Color placeholderColor;
+  final Color iconColor;
+
+  @override
+  State<_AttachmentThumb> createState() => _AttachmentThumbState();
+}
+
+class _AttachmentThumbState extends State<_AttachmentThumb> {
+  Uint8List? _bytes;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final b = await widget.load();
+      if (!mounted) return;
+      setState(() {
+        if (b != null && b.isNotEmpty) {
+          _bytes = Uint8List.fromList(b);
+        } else {
+          _failed = true;
+        }
+      });
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const side = 180.0;
+    if (_bytes != null) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: side, maxHeight: side),
+        child: Image.memory(_bytes!, fit: BoxFit.cover),
+      );
+    }
+    return Container(
+      width: side,
+      height: 120,
+      color: widget.placeholderColor,
+      alignment: Alignment.center,
+      child: _failed
+          ? AppIcon('icon_image', size: 28, color: widget.iconColor)
+          : SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2, color: widget.iconColor)),
     );
   }
 }

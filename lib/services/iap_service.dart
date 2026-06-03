@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
 import '../models/subscription_models.dart';
 import 'subscription_service.dart';
@@ -29,6 +30,10 @@ class IapService {
   static const appleMonthly = 'ERSplitPremium24356';
   static const appleAnnual = 'CoHarmonyPremiumAnnual';
   static const googleProduct = 'ezsplit_premium_monthly';
+
+  /// Google Play base-plan id for the annual plan (any other base plan = monthly).
+  /// Matches the Play Console config used by MAUI (note the intentional spelling).
+  static const googleAnnualBasePlanId = 'coharmonypremiunannual';
 
   bool get _supported => Platform.isIOS || Platform.isAndroid;
 
@@ -92,8 +97,66 @@ class IapService {
       _results.add((success: false, message: 'That subscription is not available in the store yet.'));
       return;
     }
-    final param = PurchaseParam(productDetails: resp.productDetails.first);
+    final param = _purchaseParamFor(resp, plan);
+    if (param == null) {
+      _results.add((success: false, message: 'No subscription offers available for this plan yet.'));
+      return;
+    }
     await _iap.buyNonConsumable(purchaseParam: param);
+  }
+
+  /// Builds the purchase param for [plan]. On iOS each plan is a distinct product,
+  /// so the single result is used directly. On Android the one subscription product
+  /// flattens to one [GooglePlayProductDetails] per base-plan/offer — pick the offer
+  /// on the annual base plan (or any non-annual base plan for monthly), preferring a
+  /// `free-trial` offer, then any named offer, then the default. Mirrors MAUI's
+  /// `HandleGoogleSubscriptionAsync` offer-token selection.
+  PurchaseParam? _purchaseParamFor(ProductDetailsResponse resp, SubscriptionPlan plan) {
+    if (!Platform.isAndroid) {
+      return PurchaseParam(productDetails: resp.productDetails.first);
+    }
+    final offers = resp.productDetails.whereType<GooglePlayProductDetails>().toList();
+    if (offers.isEmpty) return PurchaseParam(productDetails: resp.productDetails.first);
+
+    String? basePlanOf(GooglePlayProductDetails g) {
+      final list = g.productDetails.subscriptionOfferDetails;
+      final i = g.subscriptionIndex;
+      if (list == null || i == null || i >= list.length) return null;
+      return list[i].basePlanId;
+    }
+
+    String? offerIdOf(GooglePlayProductDetails g) {
+      final list = g.productDetails.subscriptionOfferDetails;
+      final i = g.subscriptionIndex;
+      if (list == null || i == null || i >= list.length) return null;
+      return list[i].offerId;
+    }
+
+    final wantAnnual = plan == SubscriptionPlan.annual;
+    final matches = offers.where((g) {
+      final bp = basePlanOf(g);
+      if (bp == null) return false;
+      return wantAnnual ? bp == googleAnnualBasePlanId : bp != googleAnnualBasePlanId;
+    }).toList();
+
+    GooglePlayProductDetails? pick;
+    for (final g in matches) {
+      if (offerIdOf(g) == 'free-trial') {
+        pick = g;
+        break;
+      }
+    }
+    if (pick == null) {
+      for (final g in matches) {
+        if ((offerIdOf(g) ?? '').isNotEmpty) {
+          pick = g;
+          break;
+        }
+      }
+    }
+    pick ??= matches.isNotEmpty ? matches.first : null;
+    pick ??= offers.first; // last-resort fallback so a purchase can still proceed
+    return GooglePlayPurchaseParam(productDetails: pick, offerToken: pick.offerToken);
   }
 
   /// Restore previous purchases. Restored items flow through [results].

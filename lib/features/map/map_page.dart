@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
@@ -38,7 +40,7 @@ class _MapPageState extends State<MapPage> {
 
   // Loaded data + filter state (mirrors MAUI's _showPois / _showCustodyTransfers).
   List<PointOfInterest> _pois = [];
-  List<LocationRecord> _records = [];
+  List<ScheduleTransferPin> _transferPins = [];
   bool _showPois = true;
   bool _showTransfers = true;
 
@@ -46,6 +48,14 @@ class _MapPageState extends State<MapPage> {
   double? _selLat;
   double? _selLng;
   bool _busy = false;
+
+  // Address-search autocomplete (debounced, Google Places via server proxy with
+  // an on-device geocoding fallback) — mirrors MAUI's suggestion list.
+  Timer? _addrDebounce;
+  // placeId is set for Places results (coords fetched on tap); for geocoding
+  // fallbacks placeId is empty and lat/lng are filled inline.
+  List<({String label, String placeId, double? lat, double? lng})> _suggestions = const [];
+  bool _searching = false;
 
   @override
   void initState() {
@@ -55,6 +65,7 @@ class _MapPageState extends State<MapPage> {
 
   @override
   void dispose() {
+    _addrDebounce?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -83,18 +94,19 @@ class _MapPageState extends State<MapPage> {
 
   Future<void> _loadMarkers() async {
     List<PointOfInterest> pois = [];
-    List<LocationRecord> records = [];
+    List<ScheduleTransferPin> transfers = [];
     try {
       pois = await ServiceLocator.location.getPois();
     } catch (_) {/* continue without POIs */}
     try {
-      final (recs, _) = await ServiceLocator.location.getLocationRecords(page: 1, pageSize: 200);
-      records = recs;
-    } catch (_) {/* continue without records */}
+      // Dedicated recurring schedule-transfer locations (mirrors MAUI's map),
+      // NOT logged location records (those live on the Location Records page).
+      transfers = await ServiceLocator.location.getScheduleTransferLocations();
+    } catch (_) {/* continue without transfer pins */}
     if (!mounted) return;
     setState(() {
       _pois = pois;
-      _records = records;
+      _transferPins = transfers;
     });
     _rebuildMarkers();
   }
@@ -118,27 +130,34 @@ class _MapPageState extends State<MapPage> {
               subtitle: 'Point of Interest',
               lat: p.latitude,
               lng: p.longitude,
-              locationName: p.displayName),
+              locationName: p.displayName,
+              address: p.address),
         ));
       }
     }
-    for (final r in _records) {
-      if (r.isCustodyTransfer && !_showTransfers) continue;
-      final name = r.locationName?.isNotEmpty == true ? r.locationName! : 'Location';
-      markers.add(MapMarkerData(
-        id: 'rec_${r.locationRecordId}',
-        lat: r.latitude,
-        lng: r.longitude,
-        hue: r.isCustodyTransfer ? MapHue.green : MapHue.orange,
-        title: name,
-        snippet: r.isCustodyTransfer ? 'Custody transfer' : 'General location',
-        onTap: () => _showPinDetails(
-            title: name,
-            subtitle: r.isCustodyTransfer ? 'Custody transfer' : 'Location record',
-            lat: r.latitude,
-            lng: r.longitude,
-            locationName: name),
-      ));
+    if (_showTransfers) {
+      for (int i = 0; i < _transferPins.length; i++) {
+        final t = _transferPins[i];
+        final name = t.locationName.isNotEmpty ? t.locationName : 'Transfer location';
+        final when = [
+          if (t.dayName.isNotEmpty) t.dayName,
+          if (t.transferTime.isNotEmpty && t.transferTime != '00:00') t.transferTime,
+        ].join(' · ');
+        markers.add(MapMarkerData(
+          id: 'transfer_$i',
+          lat: t.latitude,
+          lng: t.longitude,
+          hue: MapHue.green,
+          title: name,
+          snippet: when.isNotEmpty ? 'Custody transfer · $when' : 'Custody transfer',
+          onTap: () => _showPinDetails(
+              title: name,
+              subtitle: when.isNotEmpty ? 'Custody transfer · $when' : 'Custody transfer',
+              lat: t.latitude,
+              lng: t.longitude,
+              locationName: name),
+        ));
+      }
     }
     if (_selLat != null && _selLng != null) {
       markers.add(MapMarkerData(
@@ -230,11 +249,15 @@ class _MapPageState extends State<MapPage> {
     required double lat,
     required double lng,
     required String locationName,
+    String? address,
   }) {
     PinDetailsPopup.show(
       context,
       title: title,
       subtitle: subtitle,
+      lat: lat,
+      lng: lng,
+      address: address,
       onCreateRecord: () => _createRecord(lat, lng, locationName),
       onViewRecords: () => Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => LocationRecordsPage(
@@ -314,16 +337,101 @@ class _MapPageState extends State<MapPage> {
   Future<void> _search() async {
     final query = _searchCtrl.text.trim();
     if (query.isEmpty) return;
+    // If we already have suggestions, apply the first; otherwise resolve directly.
+    if (_suggestions.isNotEmpty) {
+      await _applySuggestion(_suggestions.first);
+      return;
+    }
+    setState(() => _suggestions = const []);
     try {
+      // Prefer the Places proxy (real place results); fall back to the geocoder.
+      final places = await ServiceLocator.location.searchPlaces(query, maxResults: 1);
+      if (places.isNotEmpty) {
+        final d = await ServiceLocator.location.getPlaceDetails(places.first.placeId);
+        if (d != null) {
+          await _controller?.moveTo(d.lat, d.lng, 15);
+          return;
+        }
+      }
       final results = await locationFromAddress(query);
       if (results.isEmpty) return;
-      final loc = results.first;
-      await _controller?.moveTo(loc.latitude, loc.longitude, 14);
+      await _controller?.moveTo(results.first.latitude, results.first.longitude, 14);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Could not find that address.'), duration: Duration(seconds: 2)));
       }
+    }
+  }
+
+  /// Debounced autocomplete: 500 ms after typing stops (≥3 chars). Queries the
+  /// Google Places proxy for real place suggestions; on failure/empty, falls back
+  /// to the on-device geocoder (reverse-geocoded to readable labels).
+  void _onSearchChanged(String text) {
+    _addrDebounce?.cancel();
+    final q = text.trim();
+    if (q.length < 3) {
+      if (_suggestions.isNotEmpty) setState(() => _suggestions = const []);
+      return;
+    }
+    _addrDebounce = Timer(const Duration(milliseconds: 500), () => _fetchSuggestions(q));
+  }
+
+  Future<void> _fetchSuggestions(String query) async {
+    if (mounted) setState(() => _searching = true);
+    var out = <({String label, String placeId, double? lat, double? lng})>[];
+    try {
+      final places = await ServiceLocator.location.searchPlaces(query, maxResults: 5);
+      out = [
+        for (final p in places) (label: p.description, placeId: p.placeId, lat: null, lng: null),
+      ];
+    } catch (_) {/* fall through to geocoder */}
+
+    if (out.isEmpty) {
+      try {
+        final locs = await locationFromAddress(query);
+        for (final loc in locs.take(5)) {
+          String label = query;
+          try {
+            final marks = await placemarkFromCoordinates(loc.latitude, loc.longitude);
+            if (marks.isNotEmpty) {
+              final m = marks.first;
+              label = [
+                if (m.name?.isNotEmpty ?? false) m.name,
+                if ((m.street?.isNotEmpty ?? false) && m.street != m.name) m.street,
+                if (m.locality?.isNotEmpty ?? false) m.locality,
+                if (m.administrativeArea?.isNotEmpty ?? false) m.administrativeArea,
+              ].whereType<String>().toSet().join(', ');
+            }
+          } catch (_) {/* keep the raw query as the label */}
+          out.add((label: label.isEmpty ? query : label, placeId: '', lat: loc.latitude, lng: loc.longitude));
+        }
+      } catch (_) {/* no matches */}
+    }
+    if (!mounted) return;
+    setState(() {
+      _suggestions = out;
+      _searching = false;
+    });
+  }
+
+  Future<void> _applySuggestion(({String label, String placeId, double? lat, double? lng}) s) async {
+    FocusScope.of(context).unfocus();
+    _searchCtrl.text = s.label;
+    setState(() => _suggestions = const []);
+    // Places results need a details lookup for coordinates; geocoder results
+    // already carry lat/lng.
+    var lat = s.lat;
+    var lng = s.lng;
+    if ((lat == null || lng == null) && s.placeId.isNotEmpty) {
+      final d = await ServiceLocator.location.getPlaceDetails(s.placeId);
+      if (d != null) {
+        lat = d.lat;
+        lng = d.lng;
+      }
+    }
+    if (lat != null && lng != null) {
+      await _controller?.moveTo(lat, lng, 15);
     }
   }
 
@@ -346,8 +454,19 @@ class _MapPageState extends State<MapPage> {
                   myLocationEnabled: _myLocationEnabled,
                   onMapReady: (c) => _controller = c,
                   onTap: _onMapTap,
+                  highlightLat: _selLat,
+                  highlightLng: _selLng,
                 ),
-                Positioned(top: 16, left: 16, right: 16, child: _searchBar(context)),
+                Positioned(
+                    top: 16,
+                    left: 16,
+                    right: 16,
+                    child: Column(
+                      children: [
+                        _searchBar(context),
+                        if (_suggestions.isNotEmpty || _searching) _suggestionsList(context),
+                      ],
+                    )),
                 Positioned(
                   right: 16,
                   bottom: 120,
@@ -439,6 +558,7 @@ class _MapPageState extends State<MapPage> {
             child: TextField(
               controller: _searchCtrl,
               textInputAction: TextInputAction.search,
+              onChanged: _onSearchChanged,
               onSubmitted: (_) => _search(),
               style: TextStyle(fontSize: 15, color: palette.textPrimary),
               decoration: InputDecoration(
@@ -453,12 +573,57 @@ class _MapPageState extends State<MapPage> {
           GestureDetector(
             onTap: () {
               _searchCtrl.clear();
+              setState(() => _suggestions = const []);
               FocusScope.of(context).unfocus();
             },
             child: AppIcon('icon_close', size: 16, color: palette.textSecondary),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _suggestionsList(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      decoration: BoxDecoration(
+        color: palette.surfaceElevated,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 12, offset: const Offset(0, 4))],
+      ),
+      child: _searching && _suggestions.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(
+                  child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
+            )
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (int i = 0; i < _suggestions.length; i++) ...[
+                  if (i > 0) Divider(height: 1, color: palette.border),
+                  InkWell(
+                    onTap: () => _applySuggestion(_suggestions[i]),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      child: Row(
+                        children: [
+                          AppIcon('icon_location', size: 16, color: palette.textSecondary),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(_suggestions[i].label,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 14, color: palette.textPrimary)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
     );
   }
 }

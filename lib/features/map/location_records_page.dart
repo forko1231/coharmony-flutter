@@ -47,6 +47,8 @@ class _LocationRecordsPageState extends State<LocationRecordsPage> {
   int _thisMonth = 0;
 
   bool? _filterCustodyTransfer; // null = all, true = custody, false = general
+  DateTime? _filterFrom; // inclusive lower bound (null = unbounded)
+  DateTime? _filterTo; // inclusive upper bound (null = unbounded)
   bool _capturing = false;
 
   @override
@@ -143,11 +145,15 @@ class _LocationRecordsPageState extends State<LocationRecordsPage> {
               page: _page,
               pageSize: _pageSize,
               isCustodyTransfer: _filterCustodyTransfer,
+              startDate: _filterFrom,
+              endDate: _filterTo,
             )
           : await ServiceLocator.location.getLocationRecords(
               page: _page,
               pageSize: _pageSize,
               isCustodyTransfer: _filterCustodyTransfer,
+              startDate: _filterFrom,
+              endDate: _filterTo,
             );
       if (!mounted) return;
       setState(() {
@@ -180,11 +186,15 @@ class _LocationRecordsPageState extends State<LocationRecordsPage> {
               page: 1,
               pageSize: 1000,
               isCustodyTransfer: _filterCustodyTransfer,
+              startDate: _filterFrom,
+              endDate: _filterTo,
             )
           : await ServiceLocator.location.getLocationRecords(
               page: 1,
               pageSize: 1000,
               isCustodyTransfer: _filterCustodyTransfer,
+              startDate: _filterFrom,
+              endDate: _filterTo,
             );
       final now = DateTime.now();
       if (!mounted) return;
@@ -245,7 +255,7 @@ class _LocationRecordsPageState extends State<LocationRecordsPage> {
   Widget _header(BuildContext context) {
     final palette = context.palette;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      padding: EdgeInsets.fromLTRB(20, MediaQuery.viewPaddingOf(context).top + 16, 20, 16),
       decoration: BoxDecoration(
         color: palette.surface,
         boxShadow: [
@@ -537,21 +547,25 @@ class _LocationRecordsPageState extends State<LocationRecordsPage> {
 
   // ── Filter bottom sheet ─────────────────────────────────────────────────────
   Future<void> _showFilter(BuildContext context) async {
-    final result = await showModalBottomSheet<String>(
+    final result = await showModalBottomSheet<({String type, DateTime? from, DateTime? to})>(
       context: context,
       backgroundColor: context.palette.surfaceElevated,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
       builder: (_) => _RecordsFilterSheet(
         initial: _filterCustodyTransfer == null ? 'all' : (_filterCustodyTransfer! ? 'custody' : 'general'),
+        initialFrom: _filterFrom,
+        initialTo: _filterTo,
       ),
     );
     if (result == null) return;
     setState(() {
-      _filterCustodyTransfer = switch (result) {
+      _filterCustodyTransfer = switch (result.type) {
         'custody' => true,
         'general' => false,
         _ => null,
       };
+      _filterFrom = result.from;
+      _filterTo = result.to;
     });
     await _loadInitial();
   }
@@ -560,13 +574,72 @@ class _LocationRecordsPageState extends State<LocationRecordsPage> {
 // ── Filter sheet ─────────────────────────────────────────────────────────────────
 class _RecordsFilterSheet extends StatefulWidget {
   final String initial;
-  const _RecordsFilterSheet({required this.initial});
+  final DateTime? initialFrom;
+  final DateTime? initialTo;
+  const _RecordsFilterSheet({required this.initial, this.initialFrom, this.initialTo});
   @override
   State<_RecordsFilterSheet> createState() => _RecordsFilterSheetState();
 }
 
 class _RecordsFilterSheetState extends State<_RecordsFilterSheet> {
   late String _type = widget.initial;
+  // Pre-seed the pickers to a last-3-months → today window when no filter is
+  // active yet (mirrors MAUI's default filter range). The list itself stays
+  // unbounded until the user applies; "Clear" resets these to null.
+  late DateTime? _from =
+      widget.initialFrom ?? DateTime(DateTime.now().year, DateTime.now().month - 3, DateTime.now().day);
+  late DateTime? _to = widget.initialTo ??
+      DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day, 23, 59, 59);
+
+  static String _fmt(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Future<void> _pickFrom() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _from ?? DateTime.now(),
+      firstDate: DateTime(DateTime.now().year - 5),
+      lastDate: _to ?? DateTime(DateTime.now().year + 1),
+    );
+    if (picked != null) setState(() => _from = picked);
+  }
+
+  Future<void> _pickTo() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _to ?? DateTime.now(),
+      firstDate: _from ?? DateTime(DateTime.now().year - 5),
+      lastDate: DateTime(DateTime.now().year + 1),
+    );
+    // Include the whole selected day by snapping to end-of-day.
+    if (picked != null) {
+      setState(() => _to = DateTime(picked.year, picked.month, picked.day, 23, 59, 59));
+    }
+  }
+
+  Widget _dateBox(BuildContext context, String label, DateTime? value, VoidCallback onTap) {
+    final palette = context.palette;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: palette.surfaceInput,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: palette.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+            const SizedBox(height: 4),
+            Text(value == null ? 'Any' : _fmt(value),
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -622,8 +695,33 @@ class _RecordsFilterSheetState extends State<_RecordsFilterSheet> {
           radio('custody', 'Custody transfers only', AppColors.successGreen),
           radio('general', 'General locations only', AppColors.warningAmber),
           const SizedBox(height: 20),
+          Row(
+            children: [
+              Text('Date Range',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+              const Spacer(),
+              if (_from != null || _to != null)
+                GestureDetector(
+                  onTap: () => setState(() {
+                    _from = null;
+                    _to = null;
+                  }),
+                  child: const Text('Clear',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.primaryBlue)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: _dateBox(context, 'From', _from, _pickFrom)),
+              const SizedBox(width: 10),
+              Expanded(child: _dateBox(context, 'To', _to, _pickTo)),
+            ],
+          ),
+          const SizedBox(height: 20),
           GestureDetector(
-            onTap: () => Navigator.of(context).pop(_type),
+            onTap: () => Navigator.of(context).pop((type: _type, from: _from, to: _to)),
             child: Container(
               height: 52,
               alignment: Alignment.center,

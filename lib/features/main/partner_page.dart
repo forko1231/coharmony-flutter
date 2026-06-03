@@ -108,6 +108,8 @@ class _PartnerPageState extends State<PartnerPage> {
                             const SizedBox(height: 20),
                             _approvedLawyersCard(context),
                           ],
+                          const SizedBox(height: 20),
+                          _dataProtectedCard(context),
                         ],
                       ),
                     ),
@@ -285,7 +287,6 @@ class _PartnerPageState extends State<PartnerPage> {
 
   // ── Pending lawyer requests ─────────────────────────────────────────────────────
   Widget _lawyerRequestsCard(BuildContext context) {
-    final palette = context.palette;
     return _card(
       context,
       child: Column(
@@ -304,9 +305,40 @@ class _PartnerPageState extends State<PartnerPage> {
                 _lawyerRequests[i].lawyerEmail ?? '', AppColors.warningAmber,
                 badge: 'Request', badgeColor: AppColors.warningAmber),
             const SizedBox(height: 8),
-            Text(
-                'Accepting grants this lawyer read access to your schedules, payment records, messages, and location data. Only accept someone you know and trust.',
-                style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+            if (_lawyerRequests[i].lawyerFirm?.isNotEmpty ?? false)
+              _detailRow(context, 'icon_home', 'Firm:', _lawyerRequests[i].lawyerFirm!),
+            if (_lawyerRequests[i].lawyerBarNumber?.isNotEmpty ?? false)
+              _detailRow(context, 'icon_document', 'Bar #:', _lawyerRequests[i].lawyerBarNumber!),
+            if (_lawyerRequests[i].requestedAt != null)
+              _detailRow(context, 'icon_calendar', 'Requested:', _fmtDate(_lawyerRequests[i].requestedAt!.toLocal())),
+            const SizedBox(height: 8),
+            // Prominent red consent box — granting a lawyer access to all the
+            // user's data is sensitive (mirrors MAUI's warning styling).
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: context.isDark ? const Color(0xFF3F1D1D) : const Color(0xFFFEF2F2),
+                border: Border.all(color: AppColors.dangerRed),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 1),
+                    child: AppIcon('icon_alert', size: 14, color: AppColors.dangerRed),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                        'Accepting grants this lawyer read access to your schedules, payment records, messages, and location data. Only accept someone you know and trust.',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: context.isDark ? const Color(0xFFFCA5A5) : const Color(0xFFB91C1C))),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(height: 10),
             Row(
               children: [
@@ -345,9 +377,79 @@ class _PartnerPageState extends State<PartnerPage> {
                 AppColors.successGreen,
                 badge: 'Approved', badgeColor: AppColors.successGreen),
             const SizedBox(height: 8),
+            if (_lawyers[i].lawyerFirm?.isNotEmpty ?? false)
+              _detailRow(context, 'icon_home', 'Firm:', _lawyers[i].lawyerFirm!, valueColor: const Color(0xFF166534)),
+            if (_lawyers[i].lawyerBarNumber?.isNotEmpty ?? false)
+              _detailRow(context, 'icon_document', 'Bar #:', _lawyers[i].lawyerBarNumber!,
+                  valueColor: const Color(0xFF166534)),
+            if (_lawyers[i].approvedAt != null)
+              _detailRow(context, 'icon_check_circle', 'Approved:', _fmtDate(_lawyers[i].approvedAt!.toLocal()),
+                  valueColor: const Color(0xFF166534)),
+            const SizedBox(height: 8),
             _pillButton(context, 'Remove Access', AppColors.dangerRed,
                 () => _removeLawyer(_lawyers[i].lawyerEmail)),
           ],
+        ],
+      ),
+    );
+  }
+
+  // Detail row (icon + label + value) used by the lawyer cards — mirrors MAUI's CreateDetailRow.
+  Widget _detailRow(BuildContext context, String icon, String label, String value, {Color? valueColor}) {
+    final palette = context.palette;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(width: 24, child: AppIcon(icon, size: 18, color: palette.textSecondary)),
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(fontSize: 14, color: palette.textSecondary)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(value,
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: valueColor ?? palette.textPrimary)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // "Your Data is Protected" gradient shield card — always shown at the bottom (MAUI parity).
+  Widget _dataProtectedCard(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0EA5E9), Color(0xFF0284C7)],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(color: const Color(0xFF0EA5E9).withValues(alpha: 0.3), offset: const Offset(0, 6), blurRadius: 16),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(12)),
+            child: const AppIcon('icon_shield', size: 24, color: Colors.white),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Your Data is Protected',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.white)),
+                SizedBox(height: 2),
+                Text('Only approved connections can access your information',
+                    style: TextStyle(fontSize: 13, color: Color(0xFFE0F2FE))),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -357,6 +459,9 @@ class _PartnerPageState extends State<PartnerPage> {
     final full = '${c.firstName ?? ''} ${c.lastName ?? ''}'.trim();
     return full.isNotEmpty ? full : (c.email ?? 'Child');
   }
+
+  static const _shortMonths = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  static String _fmtDate(DateTime d) => '${_shortMonths[d.month]} ${d.day.toString().padLeft(2, '0')}, ${d.year}';
 
   // ── Actions ─────────────────────────────────────────────────────────────────────
   Future<void> _sendPartnerInvite() async {

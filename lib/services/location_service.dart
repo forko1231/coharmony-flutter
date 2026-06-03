@@ -239,6 +239,48 @@ class LocationService {
     }
   }
 
+  // ---- Address autocomplete (Google Places via server proxy) --------------
+  // Port of `AddressSearchService.cs`. The API key lives server-side; the client
+  // only hits api/places/autocomplete (suggestions) then api/places/details
+  // (coordinates for a chosen placeId). Gives real place/business suggestions —
+  // far better than the on-device geocoder.
+
+  Future<List<({String description, String placeId})>> searchPlaces(String query,
+      {int maxResults = 5}) async {
+    if (query.trim().isEmpty) return const [];
+    final enc = Uri.encodeQueryComponent(query.trim());
+    final json = await _api.getJson('api/places/autocomplete?input=$enc&maxResults=$maxResults');
+    if (json is List) {
+      return [
+        for (final e in json)
+          if (e is Map<String, dynamic>)
+            (
+              description: (e['description'] ?? e['Description'] ?? '').toString(),
+              placeId: (e['placeId'] ?? e['PlaceId'] ?? '').toString(),
+            ),
+      ].where((s) => s.description.isNotEmpty).toList();
+    }
+    return const [];
+  }
+
+  Future<({String address, double lat, double lng})?> getPlaceDetails(String placeId) async {
+    if (placeId.trim().isEmpty) return null;
+    final enc = Uri.encodeQueryComponent(placeId.trim());
+    final json = await _api.getJson('api/places/details?placeId=$enc');
+    if (json is Map<String, dynamic>) {
+      final lat = json['latitude'] ?? json['Latitude'];
+      final lng = json['longitude'] ?? json['Longitude'];
+      if (lat is num && lng is num && (lat != 0 || lng != 0)) {
+        return (
+          address: (json['formattedAddress'] ?? json['FormattedAddress'] ?? '').toString(),
+          lat: lat.toDouble(),
+          lng: lng.toDouble(),
+        );
+      }
+    }
+    return null;
+  }
+
   // ---- Helpers ------------------------------------------------------------
 
   String _recordQuery(int page, int pageSize, bool? isCustodyTransfer,

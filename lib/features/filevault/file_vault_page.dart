@@ -19,12 +19,16 @@ import '../../widgets/app_icon.dart';
 /// immersive image viewer, and the system viewer for documents/videos, plus
 /// search + extension filtering. Pure local filesystem — no API (matches MAUI).
 class FileVaultPage extends StatefulWidget {
-  const FileVaultPage({super.key, this.pickFile = false});
+  const FileVaultPage({super.key, this.pickFile = false, this.pickFolder = false});
 
   /// File-picker mode (MAUI's `Filevault(false, true)`): tapping a file pops the
   /// page returning its path instead of opening it. Folders still navigate.
   /// Used by the chat composer's "Select from Vault" attachment source.
   final bool pickFile;
+
+  /// Folder-picker mode (MAUI's `Filevault(true)`): drill into folders, then tap
+  /// "Save Here" to pop the chosen directory path. Used by chat "Save to Vault".
+  final bool pickFolder;
 
   @override
   State<FileVaultPage> createState() => _FileVaultPageState();
@@ -145,8 +149,9 @@ class _FileVaultPageState extends State<FileVaultPage> {
   }
 
   bool get _atRoot => _root != null && _current.path == _root!.path;
-  String get _title =>
-      _atRoot ? (widget.pickFile ? 'Select from Vault' : 'File Vault') : p.basename(_current.path);
+  String get _title => _atRoot
+      ? (widget.pickFolder ? 'Choose Folder' : (widget.pickFile ? 'Select from Vault' : 'File Vault'))
+      : p.basename(_current.path);
   List<_FsItem> get _selectedItems => _items.where((i) => i.selected).toList();
 
   // ── Navigation ───────────────────────────────────────────────────────────
@@ -182,6 +187,9 @@ class _FileVaultPageState extends State<FileVaultPage> {
     }
     if (item.isFolder) {
       await _navigateTo(item);
+    } else if (widget.pickFolder) {
+      // Folder-picker mode: files aren't selectable; only folders + "Save Here".
+      return;
     } else if (widget.pickFile) {
       // File-picker mode: return the chosen file's path to the caller.
       Navigator.of(context).pop(item.path);
@@ -196,7 +204,7 @@ class _FileVaultPageState extends State<FileVaultPage> {
       final picker = ImagePicker();
       final photo = await picker.pickImage(source: ImageSource.camera);
       if (photo == null) return;
-      await _processImportedFile(photo.path, p.basename(photo.path), askToDelete: false);
+      await _processImportedFile(photo.path, p.basename(photo.path), askToDelete: true);
     } catch (e) {
       await _showError('Camera error: $e');
     }
@@ -236,12 +244,19 @@ class _FileVaultPageState extends State<FileVaultPage> {
     }
   }
 
-  /// Copies [sourcePath] into the current folder under [fileName]; skips if a
-  /// file with that name already exists. Returns true when copied.
+  /// Copies [sourcePath] into the current folder under [fileName]. On a name
+  /// clash, prompts to replace (instead of silently skipping). Returns true when
+  /// copied. Used by the multi-file Files-app / photo-library imports.
   Future<bool> _copyInto(String sourcePath, String fileName) async {
     try {
       final dest = p.join(_current.path, fileName);
-      if (await File(dest).exists()) return false;
+      if (await File(dest).exists()) {
+        final overwrite = await _confirm('File Exists',
+            '"$fileName" already exists. Do you want to replace it?',
+            yes: 'Replace', no: 'Skip');
+        if (!overwrite) return false;
+        await File(dest).delete();
+      }
       await File(sourcePath).copy(dest);
       return true;
     } catch (_) {
@@ -249,7 +264,8 @@ class _FileVaultPageState extends State<FileVaultPage> {
     }
   }
 
-  /// Single import with overwrite prompt + success alert (mirrors C# ProcessImportedFile).
+  /// Single import with overwrite prompt + optional "delete original?" prompt +
+  /// success alert (mirrors C# ProcessImportedFile).
   Future<void> _processImportedFile(String sourcePath, String fileName,
       {required bool askToDelete}) async {
     try {
@@ -263,7 +279,19 @@ class _FileVaultPageState extends State<FileVaultPage> {
       }
       await File(sourcePath).copy(dest);
       await _loadCurrentFolder();
-      await _showInfo('Success', 'File imported successfully');
+      // Offer to remove the source copy after a successful import (matches MAUI).
+      if (askToDelete) {
+        final del = await _confirm('Import Complete',
+            'File imported successfully. Delete the original file?',
+            yes: 'Delete Original', no: 'Keep');
+        if (del) {
+          try {
+            await File(sourcePath).delete();
+          } catch (_) {/* original may be in a read-only cache — ignore */}
+        }
+      } else {
+        await _showInfo('Success', 'File imported successfully');
+      }
     } catch (e) {
       await _showError('Failed to process file: $e');
     }
@@ -536,8 +564,40 @@ class _FileVaultPageState extends State<FileVaultPage> {
                 ),
               ],
             ),
-            _fab(context),
+            if (widget.pickFolder) _saveHereBar(context) else _fab(context),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Folder-picker mode: a bottom "Save Here" button that returns the current
+  /// directory path to the caller (chat "Save to Vault").
+  Widget _saveHereBar(BuildContext context) {
+    return Positioned(
+      left: 20,
+      right: 20,
+      bottom: 32,
+      child: SafeArea(
+        top: false,
+        child: GestureDetector(
+          onTap: () => Navigator.of(context).pop(_current.path),
+          child: Container(
+            height: 52,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.primaryBlue,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                    color: AppColors.primaryBlue.withValues(alpha: 0.3),
+                    offset: const Offset(0, 4),
+                    blurRadius: 12),
+              ],
+            ),
+            child: Text(_atRoot ? 'Save to Vault root' : 'Save Here (${p.basename(_current.path)})',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+          ),
         ),
       ),
     );

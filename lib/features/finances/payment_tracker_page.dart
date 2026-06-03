@@ -339,40 +339,99 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
     final palette = context.palette;
     final s = _statusStyle(c);
     final due = c.date != null ? 'Due ${_fmtDate(c.date!)}' : '';
+    final isSplit = (c.type ?? '').toLowerCase() == 'split';
+    final payer = _isMine(c);
+    final pct = c.isSplitPayment && c.splitPercentage != null ? ' (${c.splitPercentage!.toStringAsFixed(0)}%)' : '';
+    final roleText = isSplit ? (payer ? 'You pay$pct' : 'You receive$pct') : '';
+    final hasDispute = c.paymentStatus == 'disputed' && (c.disputeReason?.isNotEmpty ?? false);
+    final hasReceipt = c.receiptUrl?.isNotEmpty ?? false;
+    final roleColor = context.isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
     return GestureDetector(
       onTap: () => _showDetails(c),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(color: palette.surfaceElevated, borderRadius: BorderRadius.circular(16)),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(color: s.bg, borderRadius: BorderRadius.circular(14)),
-              child: Center(child: AppIcon(s.icon, size: 22, color: s.tint)),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(c.category?.isNotEmpty == true ? c.category! : _typeDisplay(c),
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: palette.textPrimary)),
-                  const SizedBox(height: 2),
-                  Text('${_typeDisplay(c)} • $due', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            Row(
               children: [
-                Text('\$${_userShare(c).toStringAsFixed(2)}',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: palette.textPrimary)),
-                const SizedBox(height: 4),
-                Text(s.label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: s.tint)),
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(color: s.bg, borderRadius: BorderRadius.circular(14)),
+                  child: Center(child: AppIcon(s.icon, size: 22, color: s.tint)),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(c.category?.isNotEmpty == true ? c.category! : _typeDisplay(c),
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                      const SizedBox(height: 2),
+                      Text('${_typeDisplay(c)} • $due', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+                    ],
+                  ),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text('\$${_userShare(c).toStringAsFixed(2)}',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                    const SizedBox(height: 4),
+                    Text(s.label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: s.tint)),
+                  ],
+                ),
               ],
             ),
+            // Role row (split only) + receipt chip, aligned right under the amount.
+            if (roleText.isNotEmpty || hasReceipt) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  if (roleText.isNotEmpty) ...[
+                    AppIcon(payer ? 'icon_arrow_up' : 'icon_arrow_down', size: 13, color: roleColor),
+                    const SizedBox(width: 4),
+                    Text(roleText, style: TextStyle(fontSize: 12, color: roleColor)),
+                  ],
+                  const Spacer(),
+                  if (hasReceipt)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                      decoration: BoxDecoration(
+                          color: const Color(0xFFDBEAFE), borderRadius: BorderRadius.circular(6)),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          AppIcon('icon_image', size: 12, color: Color(0xFF1E40AF)),
+                          SizedBox(width: 4),
+                          Text('Receipt',
+                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF1E40AF))),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ],
+            // Dispute reason (full width, red).
+            if (hasDispute) ...[
+              const SizedBox(height: 6),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 1),
+                    child: AppIcon('icon_info', size: 12, color: Color(0xFFB91C1C)),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text('Reason: ${c.disputeReason!}',
+                        style: const TextStyle(fontSize: 12, color: Color(0xFFB91C1C))),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -644,6 +703,18 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
         (c.paymentStatus == 'unpaid' && !c.date!.isBefore(today)));
     final overdue = mine.where((c) => c.paymentStatus == 'unpaid' && c.date != null && c.date!.isBefore(today));
     double sum(Iterable<FCharge> cs) => cs.fold(0, (s, c) => s + _userShare(c));
+
+    // Breakdown by type (user's charges), highest total first — matches MAUI.
+    final byType = <String, ({double total, int count})>{};
+    for (final c in mine) {
+      final key = _typeDisplay(c);
+      final prev = byType[key];
+      byType[key] = (total: (prev?.total ?? 0) + _userShare(c), count: (prev?.count ?? 0) + 1);
+    }
+    final breakdown = [
+      for (final e in byType.entries) (label: e.key, total: e.value.total, count: e.value.count),
+    ]..sort((a, b) => b.total.compareTo(a.total));
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -656,6 +727,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
         pendingCount: pending.length,
         overdueTotal: sum(overdue),
         overdueCount: overdue.length,
+        breakdown: breakdown,
       ),
     );
   }
@@ -714,6 +786,10 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
                         if (c.verificationRequestDate != null)
                           Text('Marked paid: ${_fmtDate(c.verificationRequestDate!)}',
                               style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+                        if (c.receiptUrl?.isNotEmpty ?? false) ...[
+                          const SizedBox(height: 10),
+                          _ReceiptImage(chargeId: c.chargeId, height: 120),
+                        ],
                         const SizedBox(height: 10),
                         Row(
                           children: [
@@ -825,7 +901,8 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
 /// Loads + shows a charge's receipt image (base64) from the financial service.
 class _ReceiptImage extends StatefulWidget {
   final int chargeId;
-  const _ReceiptImage({required this.chargeId});
+  final double height;
+  const _ReceiptImage({required this.chargeId, this.height = 200});
 
   @override
   State<_ReceiptImage> createState() => _ReceiptImageState();
@@ -885,7 +962,7 @@ class _ReceiptImageState extends State<_ReceiptImage> {
         ClipRRect(
           borderRadius: BorderRadius.circular(8),
           child: Container(
-            height: 200,
+            height: widget.height,
             width: double.infinity,
             color: palette.surfaceInput,
             alignment: Alignment.center,
@@ -1204,6 +1281,7 @@ class _AddPaymentSheetState extends State<_AddPaymentSheet> {
 class _SummarySheet extends StatelessWidget {
   final double verifiedTotal, pendingTotal, overdueTotal;
   final int verifiedCount, pendingCount, overdueCount;
+  final List<({String label, double total, int count})> breakdown;
   const _SummarySheet({
     required this.verifiedTotal,
     required this.verifiedCount,
@@ -1211,6 +1289,7 @@ class _SummarySheet extends StatelessWidget {
     required this.pendingCount,
     required this.overdueTotal,
     required this.overdueCount,
+    required this.breakdown,
   });
 
   @override
@@ -1237,6 +1316,33 @@ class _SummarySheet extends StatelessWidget {
           _row(AppColors.iconBgYellow, const Color(0xFFA16207), 'icon_clock', 'Pending', pendingTotal, pendingCount),
           const SizedBox(height: 12),
           _row(AppColors.iconBgRed, const Color(0xFFB91C1C), 'icon_alert', 'Overdue', overdueTotal, overdueCount),
+          if (breakdown.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Text('Breakdown by Type',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+            const SizedBox(height: 8),
+            for (final b in breakdown) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: context.isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+                  border: Border.all(color: context.isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text('${b.label} (${b.count})',
+                          style: TextStyle(fontSize: 14, color: palette.textPrimary)),
+                    ),
+                    Text('\$${b.total.toStringAsFixed(2)}',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ],
           const SizedBox(height: 24),
           ElevatedButton(
             style: ElevatedButton.styleFrom(

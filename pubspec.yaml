@@ -53,6 +53,7 @@ dependencies:
   geolocator: ^13.0.1         # current location for location records
   geocoding: ^3.0.0           # reverse-geocode coordinates → address
   in_app_purchase: ^3.2.0     # StoreKit / Play Billing subscription purchase + restore
+  in_app_purchase_android: ^0.4.0  # Android base-plan/offer-token selection (annual vs monthly)
   google_maps_flutter: ^2.9.0 # live map on ANDROID (key in manifest)
   apple_maps_flutter: ^1.3.0  # native Apple MapKit on iOS (matches MAUI; no API key needed)
   # Push — ANDROID ONLY (matches MAUI; iOS push was never configured). All Firebase

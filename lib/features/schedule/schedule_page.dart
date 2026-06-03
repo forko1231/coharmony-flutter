@@ -317,7 +317,7 @@ class _SchedulePageState extends State<SchedulePage> {
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 350),
                   child: _loading
-                    ? const SkeletonCalendar(key: ValueKey('skeleton'))
+                    ? const SkeletonMonthGrid(key: ValueKey('skeleton'))
                     : SingleChildScrollView(
                         key: const ValueKey('content'),
                         padding: const EdgeInsets.fromLTRB(20, 16, 20, 100),

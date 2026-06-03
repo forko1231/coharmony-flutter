@@ -4,6 +4,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import '../../models/subscription_models.dart';
 import '../../navigation/app_navigator.dart';
+import '../../services/analytics_service.dart';
 import '../../services/external_launcher.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
@@ -22,7 +23,11 @@ import '../auth/landing_page.dart';
 /// clear tokens/secrets/prefs → back to landing). Purchase (CTA) and Restore go
 /// through the native IAP plugin. Legal links are native URL launches.
 class SubscriptionPage extends StatefulWidget {
-  const SubscriptionPage({super.key});
+  const SubscriptionPage({super.key, this.isOnboarding = false});
+
+  /// When shown as the 3rd onboarding step the header swaps the back button for a
+  /// "STEP 3 OF 3" label + progress bars (mirrors MAUI's onboarding chrome).
+  final bool isOnboarding;
 
   @override
   State<SubscriptionPage> createState() => _SubscriptionPageState();
@@ -41,6 +46,9 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
     _iapSub = ServiceLocator.iap.results.listen((r) async {
       if (!mounted) return;
       setState(() => _busy = false);
+      if (r.success) {
+        AnalyticsService.trackSubscriptionPurchased(Platform.isIOS ? 'apple_iap' : 'google_play');
+      }
       await _alert(r.success ? 'Success' : 'Notice', r.message);
       // A successful purchase refreshes status → the page flips to management.
       if (r.success && mounted) await _loadStatus();
@@ -69,8 +77,12 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
   }
 
   /// True for the states that show the active/management UI (mirrors MAUI
-  /// `UpdateUI`: Active / SharedActive / TrialActive / GracePeriod).
+  /// `UpdateUI`: Active / SharedActive / TrialActive / GracePeriod). Also honors
+  /// the server's authoritative `hasActiveSubscription` flag, so an active
+  /// subscriber still gets the management view even if the status string the API
+  /// returns isn't one of the mapped enums (otherwise it wrongly shows the paywall).
   bool get _isManaged {
+    if (_info?.hasActiveSubscription == true) return true;
     switch (_info?.status) {
       case SubscriptionStatus.active:
       case SubscriptionStatus.sharedActive:
@@ -277,26 +289,47 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
       backgroundColor: palette.background,
       body: Column(
         children: [
-          // Header
+          // Header — back button (default) OR step indicator (onboarding).
           Container(
             width: double.infinity,
             color: palette.surface,
             padding: EdgeInsets.fromLTRB(24, MediaQuery.viewPaddingOf(context).top + 16, 24, 20),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).maybePop(),
-                child: Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: context.isDark ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6),
-                    borderRadius: BorderRadius.circular(14),
+            child: widget.isOnboarding
+                ? Column(
+                    children: [
+                      const Text('STEP 3 OF 3',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 2,
+                              color: AppColors.accentPurple)),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: const [
+                          Expanded(child: _StepBar(AppColors.primaryBlue)),
+                          SizedBox(width: 8),
+                          Expanded(child: _StepBar(AppColors.successGreen)),
+                          SizedBox(width: 8),
+                          Expanded(child: _StepBar(AppColors.accentPurple)),
+                        ],
+                      ),
+                    ],
+                  )
+                : Align(
+                    alignment: Alignment.centerLeft,
+                    child: GestureDetector(
+                      onTap: () => Navigator.of(context).maybePop(),
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: context.isDark ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Center(child: AppIcon('icon_chevron_left', size: 22, color: palette.textSecondary)),
+                      ),
+                    ),
                   ),
-                  child: Center(child: AppIcon('icon_chevron_left', size: 22, color: palette.textSecondary)),
-                ),
-              ),
-            ),
           ),
           Expanded(
             child: SingleChildScrollView(
@@ -394,12 +427,14 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
                       ),
                       const SizedBox(height: 14),
 
-                      // Restore + legal
-                      TextButton(
-                        onPressed: _busy ? null : _restore,
-                        child: const Text('Restore Previous Purchase',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.primaryBlue)),
-                      ),
+                      // Restore + legal (Restore is iOS-only — App Store restore flow).
+                      if (Platform.isIOS)
+                        TextButton(
+                          onPressed: _busy ? null : _restore,
+                          child: const Text('Restore Previous Purchase',
+                              style:
+                                  TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.primaryBlue)),
+                        ),
                       Text(
                           'By subscribing, you agree to our Terms and Privacy Policy. Subscription auto-renews unless cancelled at least 24 hours before the end of the period.',
                           textAlign: TextAlign.center,
@@ -697,4 +732,14 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
         child: Text(label,
             style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: context.palette.textSecondary)),
       );
+}
+
+/// One bar of the onboarding step indicator.
+class _StepBar extends StatelessWidget {
+  const _StepBar(this.color);
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) =>
+      Container(height: 4, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)));
 }

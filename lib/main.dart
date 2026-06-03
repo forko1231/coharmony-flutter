@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
-import 'features/auth/landing_page.dart';
+import 'features/auth/bootstrap_page.dart';
 import 'services/analytics_service.dart';
 import 'services/app_navigation.dart';
 import 'services/service_locator.dart';
@@ -74,7 +74,7 @@ class CoHarmonyApp extends StatelessWidget {
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: mode,
-        home: const LandingPage(),
+        home: const BootstrapPage(),
       ),
     );
   }

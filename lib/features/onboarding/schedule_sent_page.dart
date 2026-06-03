@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../models/custody_models.dart';
 import '../../navigation/app_navigator.dart';
 import '../../services/analytics_service.dart';
 import '../../services/onboarding_state.dart';
@@ -7,6 +8,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
 import '../../widgets/hero_orb.dart';
 import 'onboarding_step_header.dart';
+import 'proposal_preview_grid.dart';
 
 /// Onboarding step 2.5 — "schedule sent" celebration — port of
 /// `OnboardingScheduleSentPage.xaml(.cs)`.
@@ -28,6 +30,7 @@ class ScheduleSentPage extends StatefulWidget {
 
 class _ScheduleSentPageState extends State<ScheduleSentPage> {
   int? _proposalId;
+  CustodyProposalDto? _proposal;
   String _subtitle = 'Your co-parent will be notified to review and respond.';
   bool _busy = false;
   bool _loadedOnce = false;
@@ -49,10 +52,15 @@ class _ScheduleSentPageState extends State<ScheduleSentPage> {
         setState(() => _subtitle = '$partner will be notified to review and respond.');
       }
     } catch (_) {/* default subtitle is fine */}
-    // Fetch the active proposal so Redo can withdraw it.
+    // Fetch the active proposal so Redo can withdraw it + the preview can render.
     try {
       final active = await ServiceLocator.custodyProposal.getActiveProposal();
-      if (mounted) _proposalId = active?.proposal?.proposalId;
+      if (mounted) {
+        setState(() {
+          _proposal = active?.proposal;
+          _proposalId = active?.proposal?.proposalId;
+        });
+      }
     } catch (_) {/* preview/withdraw simply unavailable */}
   }
 
@@ -169,7 +177,13 @@ class _ScheduleSentPageState extends State<ScheduleSentPage> {
                                     _chip('Mom', const Color(0xFFFCE7F3), const Color(0xFFBE185D)),
                                   ],
                                 ),
-                                // PreviewContainer — week rows rendered by the shared proposal-preview widget (schedule pass).
+                                if (_proposal != null) ...[
+                                  const SizedBox(height: 16),
+                                  ProposalPreviewGrid(
+                                    patternLength: _proposal!.patternLength,
+                                    days: _proposal!.days,
+                                  ),
+                                ],
                               ],
                             ),
                           ),

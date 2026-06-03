@@ -71,6 +71,8 @@ class PlatformMap extends StatelessWidget {
     this.myLocationEnabled = false,
     this.onMapReady,
     this.onTap,
+    this.highlightLat,
+    this.highlightLng,
   });
 
   final double initialLat;
@@ -82,6 +84,14 @@ class PlatformMap extends StatelessWidget {
 
   /// Called when the user taps an empty part of the map (lat/lng of the tap).
   final void Function(double lat, double lng)? onTap;
+
+  /// When set, draws a translucent highlight circle around this point (the
+  /// user's tapped/selected location) — mirrors MAUI's selected-location ring.
+  final double? highlightLat;
+  final double? highlightLng;
+
+  static const _ringFill = Color(0x338B5CF6); // violet @ 20%
+  static const _ringStroke = Color(0xFF8B5CF6);
 
   bool get _useApple => defaultTargetPlatform == TargetPlatform.iOS;
 
@@ -101,6 +111,17 @@ class PlatformMap extends StatelessWidget {
               icon: amap.BitmapDescriptor.defaultAnnotationWithHue(m.hue),
               infoWindow: amap.InfoWindow(title: m.title, snippet: m.snippet),
               onTap: m.onTap,
+            ),
+        },
+        circles: {
+          if (highlightLat != null && highlightLng != null)
+            amap.Circle(
+              circleId: amap.CircleId('highlight'),
+              center: amap.LatLng(highlightLat!, highlightLng!),
+              radius: 120,
+              fillColor: _ringFill,
+              strokeColor: _ringStroke,
+              strokeWidth: 2,
             ),
         },
         myLocationEnabled: myLocationEnabled,
@@ -123,6 +144,17 @@ class PlatformMap extends StatelessWidget {
             icon: gmap.BitmapDescriptor.defaultMarkerWithHue(m.hue),
             infoWindow: gmap.InfoWindow(title: m.title, snippet: m.snippet),
             onTap: m.onTap,
+          ),
+      },
+      circles: {
+        if (highlightLat != null && highlightLng != null)
+          gmap.Circle(
+            circleId: const gmap.CircleId('highlight'),
+            center: gmap.LatLng(highlightLat!, highlightLng!),
+            radius: 120,
+            fillColor: _ringFill,
+            strokeColor: _ringStroke,
+            strokeWidth: 2,
           ),
       },
       myLocationEnabled: myLocationEnabled,

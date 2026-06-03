@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../navigation/app_navigator.dart';
+import '../../services/network_check.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
@@ -35,11 +36,29 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
+  static final _emailRe = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
   Future<void> _signIn() async {
     final email = _email.text.trim();
     final password = _password.text;
-    if (email.isEmpty || password.isEmpty) {
-      setState(() => _error = 'Please enter your email and password.');
+    // Field-specific validation (mirrors MAUI's per-field messages).
+    if (email.isEmpty) {
+      setState(() => _error = 'Please enter your email address.');
+      return;
+    }
+    if (password.isEmpty) {
+      setState(() => _error = 'Please enter your password.');
+      return;
+    }
+    if (!_emailRe.hasMatch(email)) {
+      setState(() => _error = 'Please enter a valid email address.');
+      return;
+    }
+
+    // Connectivity precheck (MAUI gates auth behind NetworkAccess).
+    if (!await NetworkCheck.hasInternet(ServiceLocator.api.baseUrl)) {
+      if (!mounted) return;
+      setState(() => _error = 'No internet connection. Please check your network and try again.');
       return;
     }
 

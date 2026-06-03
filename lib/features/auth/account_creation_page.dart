@@ -1,4 +1,8 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import '../../services/analytics_service.dart';
+import '../../services/external_launcher.dart';
+import '../../services/network_check.dart';
 import '../../services/onboarding_state.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
@@ -56,12 +60,31 @@ class _AccountCreationPageState extends State<AccountCreationPage> {
       setState(() => _error = 'Please fill in all fields.');
       return;
     }
+    if (!_isValidEmail(email)) {
+      setState(() => _error = 'Please enter a valid email address.');
+      return;
+    }
+    if (password.length < 8) {
+      setState(() => _error = 'Password must be at least 8 characters.');
+      return;
+    }
+    if (_passwordScore(password) < 2) {
+      setState(() => _error = 'Please choose a stronger password (mix letters, numbers or symbols).');
+      return;
+    }
     if (password != confirm) {
       setState(() => _error = 'Passwords do not match.');
       return;
     }
     if (!_agreedTerms) {
       setState(() => _error = 'Please accept the Terms and Privacy Policy.');
+      return;
+    }
+
+    // Connectivity precheck (MAUI gates signup behind NetworkAccess).
+    if (!await NetworkCheck.hasInternet(ServiceLocator.api.baseUrl)) {
+      if (!mounted) return;
+      setState(() => _error = 'No internet connection. Please check your network and try again.');
       return;
     }
 
@@ -101,6 +124,8 @@ class _AccountCreationPageState extends State<AccountCreationPage> {
         return;
       }
 
+      AnalyticsService.trackSignupCompleted();
+
       // Fresh account → ensure it walks onboarding even if the email was reused.
       OnboardingState.reset(email);
       await Preferences.setString('email', email);
@@ -128,13 +153,22 @@ class _AccountCreationPageState extends State<AccountCreationPage> {
     }
   }
 
-  void _onPasswordChanged(String pw) {
+  /// Password strength 0–4 (length, mixed case, digit, symbol). Mirrors MAUI's
+  /// scoring and is reused by both the meter and the submit-time gate.
+  int _passwordScore(String pw) {
     int score = 0;
     if (pw.length >= 8) score++;
     if (RegExp(r'[a-z]').hasMatch(pw) && RegExp(r'[A-Z]').hasMatch(pw)) score++;
     if (RegExp(r'\d').hasMatch(pw)) score++;
     if (RegExp(r'[^A-Za-z0-9]').hasMatch(pw)) score++;
-    setState(() => _strength = pw.isEmpty ? 0 : score.clamp(1, 4));
+    return score;
+  }
+
+  static bool _isValidEmail(String email) =>
+      RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
+
+  void _onPasswordChanged(String pw) {
+    setState(() => _strength = pw.isEmpty ? 0 : _passwordScore(pw).clamp(1, 4));
   }
 
   @override
@@ -253,21 +287,25 @@ class _AccountCreationPageState extends State<AccountCreationPage> {
                                 child: Text.rich(
                                   TextSpan(
                                     style: TextStyle(fontSize: 14, color: palette.textPrimary),
-                                    children: const [
-                                      TextSpan(text: 'I agree to the '),
+                                    children: [
+                                      const TextSpan(text: 'I agree to the '),
                                       TextSpan(
                                           text: 'Terms',
-                                          style: TextStyle(
+                                          style: const TextStyle(
                                               color: AppColors.primaryBlue,
                                               fontWeight: FontWeight.bold,
-                                              decoration: TextDecoration.underline)),
-                                      TextSpan(text: ' and '),
+                                              decoration: TextDecoration.underline),
+                                          recognizer: TapGestureRecognizer()
+                                            ..onTap = () => ExternalLauncher.openUrl('https://co-harmony.com/Legal/Terms')),
+                                      const TextSpan(text: ' and '),
                                       TextSpan(
                                           text: 'Privacy Policy',
-                                          style: TextStyle(
+                                          style: const TextStyle(
                                               color: AppColors.primaryBlue,
                                               fontWeight: FontWeight.bold,
-                                              decoration: TextDecoration.underline)),
+                                              decoration: TextDecoration.underline),
+                                          recognizer: TapGestureRecognizer()
+                                            ..onTap = () => ExternalLauncher.openUrl('https://co-harmony.com/Legal/Privacy')),
                                     ],
                                   ),
                                 ),

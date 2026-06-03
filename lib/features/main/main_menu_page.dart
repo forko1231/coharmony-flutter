@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../models/custody_models.dart';
 import '../../models/financial_models.dart';
 import '../../models/location_models.dart';
 import '../../models/message_models.dart';
 import '../../models/schedule_models.dart';
+import '../../services/analytics_service.dart';
+import '../../services/custody_templates/pending_template_service.dart';
 import '../../services/holiday_resolver.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
@@ -14,6 +18,7 @@ import '../../widgets/skeleton.dart';
 import '../ai/ai_chat_page.dart';
 import '../filevault/file_vault_page.dart';
 import '../messaging/chat_interface_page.dart';
+import '../schedule/custody_schedule_page.dart';
 import '../schedule/date_data_page.dart';
 import '../shell/app_shell.dart';
 import '../subscription/subscription_page.dart';
@@ -82,6 +87,41 @@ class _MainMenuPageState extends State<MainMenuPage> {
       _loadLocations(),
     ]);
     if (mounted) setState(() => _loading = false);
+    unawaited(_maybePostJoinSchedulePrompt());
+  }
+
+  /// Port of MAUI's `MaybeShowPostJoinSchedulePromptAsync` (called from MainMenu):
+  /// for an already-onboarded user whose co-parent finally joined and who has no
+  /// schedule yet, offer to set one up now. One-shot (the router flips the flag).
+  Future<void> _maybePostJoinSchedulePrompt() async {
+    bool show;
+    try {
+      show = await ServiceLocator.onboardingRouter.shouldPromptPostJoinSchedule();
+    } catch (_) {
+      return;
+    }
+    if (!show || !mounted) return;
+    final wantsNow = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Your co-parent joined!'),
+        content: const Text(
+            'Now you can set up your custody schedule together. Want to do that now?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Later')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Set it up')),
+        ],
+      ),
+    );
+    if (wantsNow == true) {
+      AnalyticsService.trackCustom('post_join_schedule_prompt_accepted');
+      PendingTemplateService.clear();
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CustodySchedulePage()));
+      if (mounted) _load();
+    } else {
+      AnalyticsService.trackCustom('post_join_schedule_prompt_dismissed');
+    }
   }
 
   Future<void> _loadPartner() async {
@@ -261,14 +301,10 @@ class _MainMenuPageState extends State<MainMenuPage> {
   }
 
   String _nextEvent() {
+    final occ = _occurrences();
+    if (occ.isEmpty) return 'No events';
+    final next = occ.first;
     final today = DateTime(_now.year, _now.month, _now.day);
-    ({ScheduleItem item, DateTime date})? next;
-    for (final s in _events) {
-      final d = DateTime(s.year, s.month, s.day);
-      if (d.isBefore(today) || s.tag.isEmpty) continue;
-      if (next == null || d.isBefore(next.date)) next = (item: s, date: d);
-    }
-    if (next == null) return 'No events';
     final name = _truncate(next.item.tag, 12);
     final d = next.date;
     if (d == today) return '$name today';
@@ -277,15 +313,53 @@ class _MainMenuPageState extends State<MainMenuPage> {
     return '$name ${_monthAbbr(d.month)} ${d.day}';
   }
 
-  List<({ScheduleItem item, DateTime date})> _upcoming() {
+  List<({ScheduleItem item, DateTime date})> _upcoming() => _occurrences().take(5).toList();
+
+  /// Upcoming event occurrences within [horizonDays], expanding recurring events
+  /// (daily/weekly/biweekly/monthly/quarterly/yearly/biyearly) so a repeating
+  /// event seeded in the past still surfaces — mirrors MAUI's recurrence expansion.
+  List<({ScheduleItem item, DateTime date})> _occurrences({int horizonDays = 90}) {
     final today = DateTime(_now.year, _now.month, _now.day);
     final out = <({ScheduleItem item, DateTime date})>[];
     for (final s in _events) {
-      final d = DateTime(s.year, s.month, s.day);
-      if (!d.isBefore(today)) out.add((item: s, date: d));
+      if (s.tag.isEmpty) continue;
+      final orig = DateTime(s.year, s.month, s.day);
+      final repeats = s.repeatType.isNotEmpty && s.repeatType.toLowerCase() != 'none';
+      if (!repeats) {
+        if (!orig.isBefore(today)) out.add((item: s, date: orig));
+        continue;
+      }
+      for (int i = 0; i <= horizonDays; i++) {
+        final day = today.add(Duration(days: i));
+        if (_eventRepeatsOn(s, day)) out.add((item: s, date: day));
+      }
     }
     out.sort((a, b) => a.date.compareTo(b.date));
-    return out.take(5).toList();
+    return out;
+  }
+
+  bool _eventRepeatsOn(ScheduleItem s, DateTime target) {
+    final orig = DateTime(s.year, s.month, s.day);
+    if (target.isBefore(orig)) return false;
+    if (s.endDate != null && target.isAfter(s.endDate!)) return false;
+    switch (s.repeatType.toLowerCase()) {
+      case 'daily':
+        return true;
+      case 'weekly':
+        return target.weekday == orig.weekday;
+      case 'biweekly':
+        return target.weekday == orig.weekday && (target.difference(orig).inDays ~/ 7) % 2 == 0;
+      case 'monthly':
+        return target.day == orig.day;
+      case 'quarterly':
+        return target.day == orig.day && ((target.year - orig.year) * 12 + (target.month - orig.month)) % 3 == 0;
+      case 'yearly':
+        return target.day == orig.day && target.month == orig.month;
+      case 'biyearly':
+        return target.day == orig.day && target.month == orig.month && (target.year - orig.year) % 2 == 0;
+      default:
+        return false;
+    }
   }
 
   // ── Message contacts ─────────────────────────────────────────────────────────
@@ -718,6 +792,25 @@ class _MainMenuPageState extends State<MainMenuPage> {
     );
   }
 
+  /// " • Weekly" style recurrence suffix for an event row (port of MAUI's
+  /// GetFriendlyRecurrenceText). Empty for one-off events.
+  static String _recurrenceSuffix(String repeatType) {
+    if (repeatType.isEmpty || repeatType.toLowerCase() == 'once') return '';
+    final label = switch (repeatType.toLowerCase()) {
+      'daily' => 'Daily',
+      'weekly' => 'Weekly',
+      'biweekly' => 'Bi-weekly',
+      'monthly' => 'Monthly',
+      'quarterly' => 'Quarterly',
+      'yearly' => 'Yearly',
+      'biyearly' => 'Every 2 years',
+      'oddweeks' => 'Odd weeks',
+      'evenweeks' => 'Even weeks',
+      _ => 'Repeating',
+    };
+    return ' • $label';
+  }
+
   Widget _eventRow(BuildContext context, ScheduleItem evt, DateTime date) {
     final palette = context.palette;
     return GestureDetector(
@@ -745,7 +838,8 @@ class _MainMenuPageState extends State<MainMenuPage> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: palette.textPrimary)),
                   const SizedBox(height: 2),
-                  Text('${_monthAbbr(date.month)} ${date.day} • ${evt.startTime}-${evt.endTime}',
+                  Text(
+                      '${_monthAbbr(date.month)} ${date.day} • ${evt.startTime}-${evt.endTime}${_recurrenceSuffix(evt.repeatType)}',
                       style: TextStyle(fontSize: 12, color: palette.textSecondary)),
                 ],
               ),

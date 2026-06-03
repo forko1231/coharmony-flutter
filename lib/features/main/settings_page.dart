@@ -308,10 +308,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   value: _notifications,
                   activeThumbColor: Colors.white,
                   activeTrackColor: AppColors.primaryBlue,
-                  onChanged: (v) {
-                    setState(() => _notifications = v);
-                    Preferences.setBool('notifications_enabled', v);
-                  },
+                  onChanged: _toggleNotifications,
                 ),
               ],
             ),
@@ -319,6 +316,21 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
+  }
+
+  /// Persist the preference, then push it to the server (mirrors MAUI's
+  /// `OnNotificationToggled` → `UpdateNotificationPreferencesAsync`). On server
+  /// failure, revert the switch + pref and inform the user so the UI never lies
+  /// about whether the server will still send notifications.
+  Future<void> _toggleNotifications(bool v) async {
+    setState(() => _notifications = v);
+    await Preferences.setBool('notifications_enabled', v);
+    final ok = await ServiceLocator.auth.updateNotificationPreferences(v);
+    if (!ok && mounted) {
+      setState(() => _notifications = !v);
+      await Preferences.setBool('notifications_enabled', !v);
+      await _alert('Error', 'Could not update your notification preference. Please try again.');
+    }
   }
 
   // ── Connections ──────────────────────────────────────────────────────────────
