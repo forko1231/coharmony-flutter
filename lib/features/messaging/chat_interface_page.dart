@@ -868,8 +868,26 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
   }
 
   Future<void> _saveAttachmentToFiles(String name, List<int> bytes) async {
-    final file = await _writeTemp(name, bytes);
-    await Share.shareXFiles([XFile(file.path)], subject: name);
+    // Native "Save to Files": file_picker.saveFile presents the system document
+    // picker (UIDocumentPicker export on iOS / SAF create-document on Android)
+    // and writes the bytes to the chosen location. The old share-sheet route
+    // didn't reliably surface "Save to Files" on iOS.
+    try {
+      final saved = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save to Files',
+        fileName: name,
+        bytes: Uint8List.fromList(bytes),
+      );
+      if (saved != null && mounted) await _alert('Saved', 'Saved to Files.');
+    } catch (e) {
+      // Fall back to the share sheet (which also offers "Save to Files").
+      try {
+        final file = await _writeTemp(name, bytes);
+        await Share.shareXFiles([XFile(file.path)], subject: name);
+      } catch (_) {
+        if (mounted) await _alert('Error', 'Could not save the file: $e');
+      }
+    }
   }
 
   Future<void> _saveAttachmentToCameraRoll(String name, List<int> bytes) async {

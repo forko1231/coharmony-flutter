@@ -334,6 +334,7 @@ class _FileVaultPageState extends State<FileVaultPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const SizedBox(height: 8),
+              if (!item.isFolder) row('savefiles', 'icon_document', 'Save to Files'),
               if (!item.isFolder) row('share', 'icon_share', 'Share'),
               row('rename', 'icon_edit', 'Rename'),
               row('delete', 'icon_trash', 'Delete', color: AppColors.dangerRed),
@@ -344,6 +345,9 @@ class _FileVaultPageState extends State<FileVaultPage> {
       },
     );
     switch (action) {
+      case 'savefiles':
+        await _saveItemToFiles(item);
+        break;
       case 'share':
         await _shareItem(item);
         break;
@@ -361,6 +365,28 @@ class _FileVaultPageState extends State<FileVaultPage> {
       await Share.shareXFiles([XFile(item.path)], subject: item.name);
     } catch (e) {
       await _showError('Failed to share: $e');
+    }
+  }
+
+  /// Native "Save to Files": exports a copy of the vault file to a location the
+  /// user picks via the system document picker (UIDocumentPicker on iOS / SAF on
+  /// Android), writing the bytes there.
+  Future<void> _saveItemToFiles(_FsItem item) async {
+    try {
+      final bytes = await File(item.path).readAsBytes();
+      final saved = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save to Files',
+        fileName: item.name,
+        bytes: bytes,
+      );
+      if (saved != null && mounted) await _showInfo('Saved', 'Saved to Files.');
+    } catch (e) {
+      // Fall back to the share sheet (also offers "Save to Files").
+      try {
+        await Share.shareXFiles([XFile(item.path)], subject: item.name);
+      } catch (_) {
+        await _showError('Could not save the file: $e');
+      }
     }
   }
 
