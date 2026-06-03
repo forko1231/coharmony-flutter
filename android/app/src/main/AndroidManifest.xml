@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Networking (http / websocket) -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Push notifications (Android 13+) -->
@@ -8,10 +9,15 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <!-- Play Billing (in_app_purchase) -->
     <uses-permission android:name="com.android.vending.BILLING"/>
-    <!-- Receipt photos (image_picker): camera + gallery -->
+    <!-- Receipt / attachment photos + camera capture (image_picker): we pick via
+         the system Android Photo Picker (Android 13+) and capture via the camera,
+         so we do NOT need the broad READ_MEDIA_* library-access permissions.
+         Strip them out of the merged manifest (image_picker/file_picker pull them
+         in) to satisfy Google Play's Photo & Video Permissions policy. -->
     <uses-permission android:name="android.permission.CAMERA"/>
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove"/>
 
     <application
         android:label="coharmony"
