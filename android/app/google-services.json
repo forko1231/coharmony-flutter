@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "414435061597",
+    "project_id": "coharmony-cd952",
+    "storage_bucket": "coharmony-cd952.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:414435061597:android:23e9881f5e252180d502b4",
+        "android_client_info": {
+          "package_name": "com.x456746A.ezsplit"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCa0MpvptbtRoDrmSsueScvcZSwS703HIc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

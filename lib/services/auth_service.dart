@@ -1,0 +1,500 @@
+import '../models/auth_models.dart';
+import 'api_client.dart';
+import 'preferences.dart';
+import 'secure_storage_service.dart';
+import 'token_service.dart';
+
+/// Port of `Services/AuthService.cs`. Faithful 1:1 reproduction of every
+/// endpoint, payload and side-effect. Cross-checked against
+/// `SplitServer/Controllers/AuthController.cs`.
+class AuthService {
+  AuthService(this._api, this._secureStorage, this._tokenService);
+
+  final ApiClient _api;
+  final SecureStorageService _secureStorage;
+  final TokenService _tokenService;
+
+  // ---- Login / session ----------------------------------------------------
+
+  Future<bool> login(String email, String password) async {
+    try {
+      final json = await _api.postJson(
+          'api/auth/token', LoginRequest(email: email, password: password).toJson());
+      if (json is Map<String, dynamic>) {
+        final tokenResponse = TokenResponse.fromJson(json);
+        if (tokenResponse.token != null && tokenResponse.token!.isNotEmpty) {
+          await _tokenService.setToken(
+            tokenResponse.token!,
+            DateTime.now().toUtc().add(Duration(minutes: tokenResponse.expiresInMinutes)),
+            tokenResponse.refreshToken,
+          );
+          await _secureStorage.storeCredentials(email, password);
+          _api.setAuthToken(tokenResponse.token);
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Attempts to restore a session from stored tokens.
+  Future<bool> tryRestoreSession() async {
+    try {
+      final currentToken = await _tokenService.getToken();
+      final tokenExpiry = await _tokenService.getTokenExpiry();
+
+      if (currentToken.isNotEmpty && tokenExpiry != null) {
+        if (tokenExpiry.isAfter(DateTime.now().toUtc().add(const Duration(minutes: 5)))) {
+          _api.setAuthToken(currentToken);
+          return true;
+        } else {
+          final newToken = await _tokenService.refreshToken(_api);
+          if (newToken != null && newToken.isNotEmpty) {
+            _api.setAuthToken(newToken);
+            return true;
+          }
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> createAccount(String email, String password, String firstName,
+      String lastName, String phoneNumber) async {
+    try {
+      final json = await _api.postJson(
+        'api/auth/register',
+        RegistrationRequest(
+          email: email,
+          password: password,
+          firstName: firstName,
+          lastName: lastName,
+          phoneNumber: phoneNumber,
+          address: '',
+        ).toJson(),
+      );
+      if (json is Map<String, dynamic>) {
+        final response = RegistrationResponse.fromJson(json);
+        if (response.success) {
+          await _secureStorage.storeCredentials(email, password);
+          await _secureStorage.secureStore('firstName', firstName);
+          await _secureStorage.secureStore('lastName', lastName);
+          await _secureStorage.secureStore('phoneNum', phoneNumber);
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> logout() async {
+    try {
+      final refreshToken = await _tokenService.getRefreshToken();
+      if (refreshToken.isNotEmpty) {
+        await _revokeTokensWithServer(refreshToken);
+      }
+      await _tokenService.removeToken();
+      _api.setAuthToken(null);
+
+      final rememberMe = Preferences.getBool('RememberMe', false);
+      if (!rememberMe) {
+        await _secureStorage.secureRemove('secure_email');
+        await _secureStorage.secureRemove('secure_password');
+      }
+      await _secureStorage.secureRemove('secure_bank_account');
+      await _secureStorage.secureRemove('secure_bank_routing');
+    } catch (_) {
+      await _tokenService.removeToken();
+      _api.setAuthToken(null);
+    }
+  }
+
+  Future<bool> _revokeTokensWithServer(String? refreshToken) async {
+    try {
+      final result = await _api.postJson(
+          'api/auth/revoke', RevokeTokenRequest(refreshToken: refreshToken).toJson());
+      return result is bool ? result : false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ---- User info ----------------------------------------------------------
+
+  Future<UserInfo?> getUserInfo() async {
+    try {
+      final json = await _api.getJson('api/auth/user/info');
+      return json is Map<String, dynamic> ? UserInfo.fromJson(json) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// SECURITY: when changing email or password, [currentPassword] MUST be
+  /// supplied or the server rejects the request.
+  Future<String> updateUserInfo({
+    String newEmail = '',
+    String phoneNumber = '',
+    String address = '',
+    String newPassword = '',
+    String currentPassword = '',
+  }) async {
+    try {
+      // NOTE: server exposes this as PUT (`[HttpPut("user/update")]`); the MAUI
+      // client POSTed here (a latent 405 mismatch). Using PUT to match the server.
+      final result = await _api.putForString(
+        'api/auth/user/update',
+        UserUpdateRequest(
+          newEmail: newEmail,
+          phoneNumber: phoneNumber,
+          address: address,
+          newPassword: newPassword,
+          currentPassword: currentPassword,
+        ).toJson(),
+      );
+
+      if (newEmail.isNotEmpty) {
+        await _secureStorage.secureStore('secure_email', newEmail);
+      }
+      if (newPassword.isNotEmpty) {
+        await _secureStorage.secureStore('secure_password', newPassword);
+        await _tokenService.removeToken();
+        _api.setAuthToken(null);
+      }
+      if (phoneNumber.isNotEmpty) {
+        await _secureStorage.secureStore('phoneNum', phoneNumber);
+      }
+      return result;
+    } catch (_) {
+      return 'Error updating user information';
+    }
+  }
+
+  // ---- Email / SMS verification ------------------------------------------
+
+  Future<bool> sendVerificationCode() async {
+    try {
+      final r = await _api.postJson('api/auth/verification/send', <String, dynamic>{});
+      return r is bool ? r : false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> verifyEmailWithCode(String verificationCode) async {
+    try {
+      final r = await _api.postJson(
+          'api/auth/verification/verify', VerificationCodeRequest(code: verificationCode).toJson());
+      return r is bool ? r : false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> sendSmsVerificationCode(String phoneNumber) async {
+    try {
+      final formatted = _formatPhoneNumber(phoneNumber);
+      final r = await _api.postJson(
+          'api/auth/sms/send', SmsVerificationRequest(phoneNumber: formatted).toJson());
+      return r is bool ? r : false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> verifySmsCode(String phoneNumber, String code) async {
+    try {
+      final formatted = _formatPhoneNumber(phoneNumber);
+      final r = await _api.postJson('api/auth/sms/verify',
+          SmsVerifyRequest(phoneNumber: formatted, code: code).toJson());
+      return r is bool ? r : false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Robust truthiness for a decoded JSON value: a JSON boolean decodes to a Dart
+  /// `bool`, but defensively accept the string forms ("true"/"True") too.
+  static bool _isTrue(dynamic v) =>
+      v == true || (v is String && v.toLowerCase() == 'true');
+
+  static String _formatPhoneNumber(String phoneNumber) {
+    final digitsOnly =
+        phoneNumber.split('').where((c) => RegExp(r'\d').hasMatch(c)).join();
+    if (digitsOnly.length == 10) return '+1$digitsOnly';
+    if (digitsOnly.length > 10) return '+$digitsOnly';
+    return phoneNumber;
+  }
+
+  // ---- Partner invites ----------------------------------------------------
+
+  Future<String> invitePartner(String partnerEmail) async {
+    try {
+      return await _api.postForString(
+          'api/auth/partner/invite', PartnerInviteRequest(partnerEmail: partnerEmail).toJson());
+    } catch (_) {
+      return 'Error sending invitation';
+    }
+  }
+
+  Future<PartnerInviteInfo> checkForInvite() async {
+    try {
+      final json = await _api.getJson('api/auth/partner/check');
+      final info = json is Map<String, dynamic> ? PartnerInviteInfo.fromJson(json) : null;
+      return info ?? PartnerInviteInfo(valid: false);
+    } catch (_) {
+      return PartnerInviteInfo(valid: false);
+    }
+  }
+
+  Future<bool> acceptInvite() async {
+    try {
+      final json = await _api.postJson('api/auth/partner/accept', <String, dynamic>{});
+      return json is Map<String, dynamic> && (json['accepted'] as bool? ?? false);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> rejectInvite() async {
+    try {
+      final json = await _api.postJson('api/auth/partner/reject', <String, dynamic>{});
+      return json is Map<String, dynamic> && (json['rejected'] as bool? ?? false);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ---- User data (export / delete) ---------------------------------------
+
+  Future<Map<String, dynamic>> getUserData([String dataType = 'all']) async {
+    try {
+      final endpoint =
+          'api/auth/user/data?dataType=${Uri.encodeQueryComponent(dataType)}';
+      final result = await _api.getJson(endpoint);
+      if (result is Map<String, dynamic> && _isTrue(result['success'])) {
+        return result;
+      }
+      return <String, dynamic>{};
+    } catch (_) {
+      return <String, dynamic>{};
+    }
+  }
+
+  Future<bool> deleteUserData(String dataType) async {
+    try {
+      final endpoint =
+          'api/auth/user/data?dataType=${Uri.encodeQueryComponent(dataType)}';
+      final result = await _api.deleteJson(endpoint);
+      return result is Map<String, dynamic> && _isTrue(result['success']);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ---- Notification preferences ------------------------------------------
+
+  Future<bool> updateNotificationPreferences(bool enabled) async {
+    try {
+      final json = await _api.postJson('api/auth/user/notifications',
+          NotificationEnabledRequest(enabled: enabled).toJson());
+      if (json is Map<String, dynamic>) {
+        return NotificationPrefsResponse.fromJson(json).success;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> getNotificationPreferences() async {
+    try {
+      final json = await _api.getJson('api/auth/user/notifications');
+      return json is Map<String, dynamic>
+          ? NotificationPrefsResponse.fromJson(json).enabled
+          : true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  // ---- Lawyer request management -----------------------------------------
+
+  Future<List<LawyerRequestInfo>> getPendingLawyerRequests() async {
+    try {
+      final json = await _api.getJson('api/auth/lawyer/check');
+      if (json is List) {
+        return json
+            .map((e) => LawyerRequestInfo.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<bool> acceptLawyerRequest(String lawyerEmail) async {
+    try {
+      final json = await _api.postJson(
+          'api/auth/lawyer/accept', LawyerEmailRequest(lawyerEmail: lawyerEmail).toJson());
+      return json is Map<String, dynamic> && (json['accepted'] as bool? ?? false);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> rejectLawyerRequest(String lawyerEmail) async {
+    try {
+      final json = await _api.postJson(
+          'api/auth/lawyer/reject', LawyerEmailRequest(lawyerEmail: lawyerEmail).toJson());
+      return json is Map<String, dynamic> && (json['rejected'] as bool? ?? false);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> removeLawyer(String lawyerEmail) async {
+    try {
+      final json = await _api.postJson(
+          'api/auth/lawyer/remove', LawyerEmailRequest(lawyerEmail: lawyerEmail).toJson());
+      return json is Map<String, dynamic> && (json['removed'] as bool? ?? false);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<List<LawyerInfo>> getApprovedLawyers() async {
+    try {
+      final json = await _api.getJson('api/auth/lawyer/list');
+      if (json is List) {
+        return json
+            .map((e) => LawyerInfo.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // ---- Password reset -----------------------------------------------------
+
+  Future<bool> initiatePasswordReset(String email) async {
+    try {
+      final r = await _api.postJson(
+          'api/auth/forgot-password', PasswordResetRequest(email: email).toJson());
+      // The server responds `{ sent: true, message }` (always — anti-enumeration),
+      // not a bare bool. Treat the object form as success so the reset flow proceeds.
+      if (r is bool) return r;
+      if (r is Map<String, dynamic>) {
+        return r['sent'] == true || r['success'] == true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> verifyPasswordResetCode(String email, String code) async {
+    try {
+      final r = await _api.postJson('api/auth/verify-reset-code',
+          VerifyResetCodeRequest(email: email, code: code).toJson());
+      return r is bool ? r : false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> completePasswordReset(
+      String email, String code, String newPassword) async {
+    try {
+      final r = await _api.postJson(
+        'api/auth/reset-password',
+        CompletePasswordResetRequest(email: email, code: code, newPassword: newPassword)
+            .toJson(),
+      );
+      return r is bool ? r : false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ---- Child account methods ---------------------------------------------
+
+  Future<String> inviteChild(String childEmail) async {
+    try {
+      return await _api.postForString(
+          'api/auth/child/invite', ChildInviteRequest(childEmail: childEmail).toJson());
+    } catch (_) {
+      return 'Error sending child invitation';
+    }
+  }
+
+  Future<ChildInviteListResponse> checkChildInvite() async {
+    try {
+      final json = await _api.getJson('api/auth/child/check');
+      final info =
+          json is Map<String, dynamic> ? ChildInviteListResponse.fromJson(json) : null;
+      return info ?? ChildInviteListResponse(hasInvites: false);
+    } catch (_) {
+      return ChildInviteListResponse(hasInvites: false);
+    }
+  }
+
+  Future<bool> acceptChildInvite(String parentEmail) async {
+    try {
+      final json = await _api.postJson(
+          'api/auth/child/accept', ChildInviteActionRequest(parentEmail: parentEmail).toJson());
+      return json is Map<String, dynamic> && (json['accepted'] as bool? ?? false);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<List<ChildInfo>> getChildren() async {
+    try {
+      final json = await _api.getJson('api/auth/children');
+      if (json is List) {
+        return json.map((e) => ChildInfo.fromJson(e as Map<String, dynamic>)).toList();
+      }
+      return [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<FamilyInfo?> getFamilyInfo() async {
+    try {
+      final json = await _api.getJson('api/auth/family');
+      return json is Map<String, dynamic> ? FamilyInfo.fromJson(json) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> declineChildInvite(String parentEmail) async {
+    try {
+      final json = await _api.postJson(
+          'api/auth/child/decline', ChildInviteActionRequest(parentEmail: parentEmail).toJson());
+      return json is Map<String, dynamic> && (json['declined'] as bool? ?? false);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> removeChildStatus() async {
+    try {
+      final json = await _api.postJson('api/auth/child/remove-status', <String, dynamic>{});
+      return json is Map<String, dynamic> && (json['success'] as bool? ?? false);
+    } catch (_) {
+      return false;
+    }
+  }
+}
