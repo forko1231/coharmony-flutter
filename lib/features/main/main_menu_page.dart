@@ -614,10 +614,14 @@ class _MainMenuPageState extends State<MainMenuPage> {
               .map((h) => Expanded(
                   child: Center(
                       child: Text(h,
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: palette.textSecondary)))))
+                          style: TextStyle(
+                              fontSize: 12,
+                              height: 1.0,
+                              fontWeight: FontWeight.bold,
+                              color: palette.textSecondary)))))
               .toList(),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 2),
         // Fixed-height cells (mirrors MAUI's 45px day cells). A square
         // childAspectRatio made cells balloon on wide screens, leaving the day
         // number stranded at the top over big blank boxes.
