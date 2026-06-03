@@ -187,13 +187,35 @@ class _MapPageState extends State<MapPage> {
 
   Future<void> _refresh() async {
     await _loadMarkers();
-    if (mounted && _markers.isNotEmpty && _controller != null) {
-      // Fit roughly to the first marker if we have no user location.
-      if (!_myLocationEnabled) {
-        final first = _markers.first;
-        await _controller!.moveTo(first.lat, first.lng, 12);
+    if (!mounted || _controller == null) return;
+    // Recenter so the refresh has a visible effect: prefer the device's current
+    // location, otherwise fall back to the first loaded marker.
+    try {
+      if (await Geolocator.isLocationServiceEnabled()) {
+        final perm = await Geolocator.checkPermission();
+        if (perm == LocationPermission.always || perm == LocationPermission.whileInUse) {
+          final pos = await Geolocator.getCurrentPosition();
+          await _controller?.moveTo(pos.latitude, pos.longitude, 14);
+          return;
+        }
       }
+    } catch (_) {/* fall through to marker fallback */}
+    if (_markers.isNotEmpty) {
+      final first = _markers.first;
+      await _controller?.moveTo(first.lat, first.lng, 12);
     }
+  }
+
+  /// Centers the map on [lat]/[lng] and drops the violet "selected" pin +
+  /// highlight ring there, so a searched address has a clear visual landing
+  /// point (mirrors MAUI dropping a pin on search).
+  Future<void> _goTo(double lat, double lng, {double zoom = 15}) async {
+    setState(() {
+      _selLat = lat;
+      _selLng = lng;
+    });
+    _rebuildMarkers();
+    await _controller?.moveTo(lat, lng, zoom);
   }
 
   // ── POI create (Add-POI FAB) ───────────────────────────────────────────────
@@ -349,13 +371,13 @@ class _MapPageState extends State<MapPage> {
       if (places.isNotEmpty) {
         final d = await ServiceLocator.location.getPlaceDetails(places.first.placeId);
         if (d != null) {
-          await _controller?.moveTo(d.lat, d.lng, 15);
+          await _goTo(d.lat, d.lng);
           return;
         }
       }
       final results = await locationFromAddress(query);
       if (results.isEmpty) return;
-      await _controller?.moveTo(results.first.latitude, results.first.longitude, 14);
+      await _goTo(results.first.latitude, results.first.longitude, zoom: 14);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -431,7 +453,7 @@ class _MapPageState extends State<MapPage> {
       }
     }
     if (lat != null && lng != null) {
-      await _controller?.moveTo(lat, lng, 15);
+      await _goTo(lat, lng);
     }
   }
 

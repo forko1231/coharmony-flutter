@@ -52,11 +52,15 @@ class PlatformMapController {
 
   Future<void> moveTo(double lat, double lng, double zoom) async {
     if (_google != null) {
-      await _google.animateCamera(
-          gmap.CameraUpdate.newLatLngZoom(gmap.LatLng(lat, lng), zoom));
+      await _google.animateCamera(gmap.CameraUpdate.newCameraPosition(
+          gmap.CameraPosition(target: gmap.LatLng(lat, lng), zoom: zoom)));
     } else if (_apple != null) {
-      await _apple.animateCamera(
-          amap.CameraUpdate.newLatLngZoom(amap.LatLng(lat, lng), zoom));
+      // Apple MapKit: use an INSTANT (non-animated) move. apple_maps_flutter's
+      // animated camera updates are choppy on iOS and frequently overshoot or
+      // settle at the wrong location ("tries to go there then jumps away");
+      // moveCamera lands deterministically on the exact target.
+      await _apple.moveCamera(amap.CameraUpdate.newCameraPosition(
+          amap.CameraPosition(target: amap.LatLng(lat, lng), zoom: zoom)));
     }
   }
 }

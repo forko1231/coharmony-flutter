@@ -104,6 +104,10 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
   // Pending attachment selected for the next outgoing message.
   String? _pendingAttachmentBase64;
   String? _pendingAttachmentFileName;
+  // Raw bytes decoded ONCE at pick time, reused as a stable image provider for
+  // the compose preview (re-running base64Decode every build made the
+  // thumbnail blank on first frame and flicker on rebuilds).
+  Uint8List? _pendingAttachmentBytes;
   int _page = 1;
   static const _pageSize = 20;
   bool _hasMore = true;
@@ -367,6 +371,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
     final text = _controller.text.trim();
     final pendingBase64 = _pendingAttachmentBase64;
     final pendingFileName = _pendingAttachmentFileName;
+    final pendingBytes = _pendingAttachmentBytes;
     final hasAttachment = pendingBase64 != null;
     if (text.isEmpty && !hasAttachment) return;
 
@@ -378,7 +383,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       receiver: _recipient,
       // Placeholder transport so the attachment chip can show the file name
       // while sending; replaced with the real encrypted payload on confirm.
-      attachment: hasAttachment ? jsonEncode({'FileName': pendingFileName}) : null,
+      attachment: hasAttachment ? jsonEncode({'fileName': pendingFileName}) : null,
       text: text,
       timestamp: DateTime.now(),
       sending: true,
@@ -389,6 +394,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       _suggestion = null;
       _pendingAttachmentBase64 = null;
       _pendingAttachmentFileName = null;
+      _pendingAttachmentBytes = null;
       _messages.add(optimistic);
       _recomputeDeliveryStatus();
     });
@@ -402,6 +408,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
         if (_controller.text.trim().isEmpty) _controller.text = text;
         _pendingAttachmentBase64 = pendingBase64;
         _pendingAttachmentFileName = pendingFileName;
+        _pendingAttachmentBytes = pendingBytes;
         _recomputeDeliveryStatus();
       });
     }
@@ -409,14 +416,17 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
     try {
       final encrypted = await ServiceLocator.messageEncryption.encryptMessage(text, _me, _recipient);
 
-      // Build the encrypted attachment transport ({FileName, EncryptedData}) —
-      // mirrors MAUI's send path.
+      // Build the encrypted attachment transport. The server deserializes this
+      // into AttachmentModel, whose [JsonPropertyName]s are camelCase
+      // (`fileName`/`encryptedData`) and matched case-SENSITIVELY — PascalCase
+      // keys make EncryptedData null → "Invalid attachment data" 500. MAUI's
+      // source-gen serializer emits camelCase, so we must too.
       String? attachmentPayload;
       if (hasAttachment) {
         final enc = await ServiceLocator.messageEncryption
             .encryptAttachment(pendingBase64, _me, _recipient);
         attachmentPayload =
-            jsonEncode({'FileName': pendingFileName, 'EncryptedData': enc});
+            jsonEncode({'fileName': pendingFileName, 'encryptedData': enc});
       }
 
       // MAUI sends to the raw contactEmail value (server resolves "partner").
@@ -716,7 +726,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
           borderRadius: BorderRadius.circular(12),
           child: _AttachmentThumb(
             key: ValueKey('thumb_${m.messageId}'),
-            load: () => _downloadAttachmentBytes(m),
+            load: () => _downloadAttachmentBytes(m, silent: true),
             placeholderColor: (outgoing ? Colors.white : palette.textSecondary).withValues(alpha: 0.15),
             iconColor: fg,
           ),
@@ -803,7 +813,14 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
 
   /// Downloads + decrypts an attachment to raw bytes (port of the
   /// GetAttachmentAsync + DecryptAttachment + base64-decode pipeline).
-  Future<List<int>?> _downloadAttachmentBytes(_Msg m) async {
+  /// Downloads + decrypts an attachment to raw bytes. [silent] suppresses the
+  /// error alerts — used for the inline thumbnail load (a background fetch that
+  /// must NOT pop a dialog over the chat if it fails); the interactive
+  /// View/Save path leaves it false so the user still gets feedback.
+  Future<List<int>?> _downloadAttachmentBytes(_Msg m, {bool silent = false}) async {
+    // A negative id is an optimistic message not yet on the server — there's no
+    // real attachment to fetch by id.
+    if (m.messageId < 0) return null;
     // Reuse already-downloaded+decrypted bytes when the user taps the same
     // attachment again (View, then Save, etc.) — avoids a second network round
     // trip and AES-GCM decrypt. Keyed by the real message id.
@@ -812,16 +829,22 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
     try {
       final att = await ServiceLocator.messaging.getAttachment(m.messageId);
       if (att == null || att.encryptedData.isEmpty) {
-        if (mounted) await _alert('Error', 'Failed to download attachment data');
+        if (!silent && mounted) await _alert('Error', 'Failed to download attachment data');
         return null;
       }
       final decrypted = await ServiceLocator.messageEncryption
           .decryptAttachment(att.encryptedData, m.sender, m.receiver);
+      // decryptAttachment returns the '[Encrypted message]' sentinel on auth
+      // failure, which is not valid base64 — guard so we don't throw on decode.
+      if (decrypted.isEmpty || decrypted == '[Encrypted message]') {
+        if (!silent && mounted) await _alert('Error', 'Failed to decrypt attachment');
+        return null;
+      }
       final bytes = base64Decode(decrypted);
       _attachmentBytesCache[m.messageId] = bytes;
       return bytes;
     } catch (e) {
-      if (mounted) await _alert('Error', 'Failed to decrypt attachment: $e');
+      if (!silent && mounted) await _alert('Error', 'Failed to decrypt attachment: $e');
       return null;
     }
   }
@@ -963,9 +986,11 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       }
       if (path == null || name == null) return;
       final bytes = await File(path).readAsBytes();
+      if (!mounted) return;
       setState(() {
         _pendingAttachmentBase64 = base64Encode(bytes);
         _pendingAttachmentFileName = name;
+        _pendingAttachmentBytes = bytes;
       });
     } catch (e) {
       if (mounted) await _alert('Error', 'Could not attach file: $e');
@@ -982,14 +1007,16 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       color: context.isDark ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6),
       child: Row(
         children: [
-          if (isImage && _pendingAttachmentBase64 != null)
+          if (isImage && _pendingAttachmentBytes != null)
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: Image.memory(
-                base64Decode(_pendingAttachmentBase64!),
+                _pendingAttachmentBytes!,
                 width: 40,
                 height: 40,
                 fit: BoxFit.cover,
+                gaplessPlayback: true,
+                cacheWidth: (40 * MediaQuery.devicePixelRatioOf(context)).round(),
                 errorBuilder: (_, _, _) =>
                     AppIcon('icon_image', size: 20, color: palette.textSecondary),
               ),
@@ -1007,6 +1034,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
             onTap: () => setState(() {
               _pendingAttachmentBase64 = null;
               _pendingAttachmentFileName = null;
+              _pendingAttachmentBytes = null;
             }),
             child: AppIcon('icon_close', size: 18, color: palette.textSecondary),
           ),
@@ -1220,8 +1248,11 @@ class _AttachmentThumb extends StatefulWidget {
 }
 
 class _AttachmentThumbState extends State<_AttachmentThumb> {
+  static const double _side = 180.0;
+
   Uint8List? _bytes;
   bool _failed = false;
+  bool _loading = false;
 
   @override
   void initState() {
@@ -1230,41 +1261,65 @@ class _AttachmentThumbState extends State<_AttachmentThumb> {
   }
 
   Future<void> _load() async {
+    if (_loading) return;
+    _loading = true;
+    if (mounted && _failed) setState(() => _failed = false); // retry resets state
     try {
       final b = await widget.load();
       if (!mounted) return;
       setState(() {
         if (b != null && b.isNotEmpty) {
           _bytes = Uint8List.fromList(b);
+          _failed = false;
         } else {
           _failed = true;
         }
       });
     } catch (_) {
       if (mounted) setState(() => _failed = true);
+    } finally {
+      _loading = false;
     }
   }
 
+  // Fixed-size box shared by the loading / failed / decode-error states so the
+  // bubble doesn't jump as the image resolves.
+  Widget _fallback({required bool spinner}) => Container(
+        width: _side,
+        height: 120,
+        color: widget.placeholderColor,
+        alignment: Alignment.center,
+        child: spinner
+            ? SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2, color: widget.iconColor))
+            : AppIcon('icon_image', size: 28, color: widget.iconColor),
+      );
+
   @override
   Widget build(BuildContext context) {
-    const side = 180.0;
-    if (_bytes != null) {
+    final bytes = _bytes;
+    if (bytes != null) {
       return ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: side, maxHeight: side),
-        child: Image.memory(_bytes!, fit: BoxFit.cover),
+        constraints: const BoxConstraints(maxWidth: _side, maxHeight: _side),
+        child: Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          // Downsample large photos to the display size — a multi-MB image
+          // decoded at full resolution wastes memory and can fail/jank on iOS.
+          cacheWidth: (_side * MediaQuery.devicePixelRatioOf(context)).round(),
+          // A corrupt/partial/undecodable payload shows the icon instead of a
+          // broken render or a thrown exception in layout.
+          errorBuilder: (_, _, _) => _fallback(spinner: false),
+        ),
       );
     }
-    return Container(
-      width: side,
-      height: 120,
-      color: widget.placeholderColor,
-      alignment: Alignment.center,
-      child: _failed
-          ? AppIcon('icon_image', size: 28, color: widget.iconColor)
-          : SizedBox(
-              width: 22,
-              height: 22,
-              child: CircularProgressIndicator(strokeWidth: 2, color: widget.iconColor)),
+    // Tapping the failed placeholder retries the download+decrypt.
+    return GestureDetector(
+      onTap: _failed ? _load : null,
+      child: _fallback(spinner: !_failed),
     );
   }
 }
@@ -1304,7 +1359,18 @@ class _AttachmentImageViewer extends StatelessWidget {
             ),
             Expanded(
               child: Center(
-                child: InteractiveViewer(child: Image.file(File(path), fit: BoxFit.contain)),
+                child: InteractiveViewer(
+                  child: Image.file(
+                    File(path),
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, _, _) => const Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Text('Unable to display this image.',
+                          style: TextStyle(color: Colors.white70, fontSize: 15)),
+                    ),
+                  ),
+                ),
               ),
             ),
           ],

@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:geocoding/geocoding.dart';
-import 'package:geolocator/geolocator.dart';
 import '../../models/location_models.dart';
 import '../../services/external_launcher.dart';
 import '../../services/service_locator.dart';
@@ -49,7 +47,6 @@ class _LocationRecordsPageState extends State<LocationRecordsPage> {
   bool? _filterCustodyTransfer; // null = all, true = custody, false = general
   DateTime? _filterFrom; // inclusive lower bound (null = unbounded)
   DateTime? _filterTo; // inclusive upper bound (null = unbounded)
-  bool _capturing = false;
 
   @override
   void initState() {
@@ -84,53 +81,6 @@ class _LocationRecordsPageState extends State<LocationRecordsPage> {
       if (mounted) await _alert('Error', 'Failed to load location records. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  /// Capture the device's current GPS position, reverse-geocode it to a name/address,
-  /// and save it as a (non-transfer) location record. Geolocation + geocoding are the
-  /// phase-3 native bits; the create call already existed.
-  Future<void> _captureCurrentLocation() async {
-    setState(() => _capturing = true);
-    try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
-        if (mounted) await _alert('Location Off', 'Please enable location services to record your current location.');
-        return;
-      }
-      var perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
-      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
-        if (mounted) await _alert('Permission Needed', 'Location permission is required to record your location.');
-        return;
-      }
-      final pos = await Geolocator.getCurrentPosition();
-      String? name;
-      String? address;
-      try {
-        final marks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
-        if (marks.isNotEmpty) {
-          final p = marks.first;
-          name = (p.name?.isNotEmpty ?? false) ? p.name : (p.street ?? p.locality);
-          final parts = [p.street, p.locality, p.administrativeArea, p.postalCode]
-              .where((s) => s != null && s.isNotEmpty)
-              .toList();
-          if (parts.isNotEmpty) address = parts.join(', ');
-        }
-      } catch (_) {/* geocoding is best-effort */}
-
-      await ServiceLocator.location.createLocationRecord(LocationRecord(
-        latitude: pos.latitude,
-        longitude: pos.longitude,
-        locationName: name,
-        address: address,
-        isCustodyTransfer: false,
-        accuracy: pos.accuracy,
-      ));
-      if (mounted) await _loadInitial();
-    } catch (e) {
-      if (mounted) await _alert('Error', 'Could not record your location: $e');
-    } finally {
-      if (mounted) setState(() => _capturing = false);
     }
   }
 
@@ -211,15 +161,6 @@ class _LocationRecordsPageState extends State<LocationRecordsPage> {
     final palette = context.palette;
     return Scaffold(
       backgroundColor: palette.background,
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: AppColors.primaryBlue,
-        foregroundColor: Colors.white,
-        onPressed: _capturing ? null : _captureCurrentLocation,
-        icon: _capturing
-            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-            : const AppIcon('icon_plus', size: 20, color: Colors.white),
-        label: Text(_capturing ? 'Saving…' : 'Add current location'),
-      ),
       body: Column(
         children: [
           _header(context),

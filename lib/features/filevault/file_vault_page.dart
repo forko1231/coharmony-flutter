@@ -640,9 +640,16 @@ class _FileVaultPageState extends State<FileVaultPage> {
               Navigator.of(context).maybePop();
             }
           }),
+          // Spacer matching the right side's extra button (48) + its margin (8)
+          // so the Expanded title region is symmetric and the title is centered
+          // relative to the whole header, not just the gap between the controls.
+          const SizedBox(width: 56),
           Expanded(
             child: Center(
               child: Text(_title,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: palette.textPrimary)),
             ),
           ),
