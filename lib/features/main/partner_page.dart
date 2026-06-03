@@ -132,7 +132,7 @@ class _PartnerPageState extends State<PartnerPage> {
   Widget _header(BuildContext context) {
     final palette = context.palette;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      padding: EdgeInsets.fromLTRB(24, MediaQuery.viewPaddingOf(context).top + 20, 24, 20),
       decoration: BoxDecoration(
         color: palette.surface,
         boxShadow: [

@@ -36,6 +36,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
   String _email = '';
 
   ApprovedScheduleResponse? _approved;
+  ActiveProposalResponse? _activeProposal;
   List<ScheduleItem> _events = const [];
   List<FCharge> _monthCharges = const []; // all charges in current month (calendar borders)
   List<FCharge> _userMonthCharges = const []; // current user's charges (payment summary)
@@ -135,6 +136,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
   Future<void> _loadCustody() async {
     try {
       _approved = await ServiceLocator.custodyProposal.getApprovedSchedule();
+      _activeProposal = await ServiceLocator.custodyProposal.getActiveProposal();
     } catch (_) {}
   }
 
@@ -485,6 +487,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
                   ],
                 ),
               ),
+              _proposalBadge(context),
               GestureDetector(
                 onTap: () => _goToTab(1),
                 child: Container(
@@ -499,9 +502,38 @@ class _MainMenuPageState extends State<MainMenuPage> {
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           _miniMonth(context),
         ],
+      ),
+    );
+  }
+
+  /// Proposal status chip shown next to "View All" (mirrors MAUI's
+  /// ProposalIndicatorBadge): Draft (gray) / Pending (amber) for your own
+  /// proposal, Review (red) when your co-parent is awaiting your response.
+  Widget _proposalBadge(BuildContext context) {
+    final active = _activeProposal;
+    final p = active?.proposal;
+    if (active?.hasActiveProposal != true || p == null) return const SizedBox.shrink();
+
+    final String label;
+    final Color color;
+    if (p.isCurrentUserProposer) {
+      final draft = p.status == 'draft';
+      label = draft ? 'Draft' : 'Pending';
+      color = draft ? const Color(0xFF6B7280) : const Color(0xFFF59E0B);
+    } else {
+      label = 'Review';
+      color = const Color(0xFFEF4444);
+    }
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+        child: Text(label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
       ),
     );
   }
@@ -586,14 +618,20 @@ class _MainMenuPageState extends State<MainMenuPage> {
               .toList(),
         ),
         const SizedBox(height: 8),
-        GridView.count(
-          crossAxisCount: 7,
+        // Fixed-height cells (mirrors MAUI's 45px day cells). A square
+        // childAspectRatio made cells balloon on wide screens, leaving the day
+        // number stranded at the top over big blank boxes.
+        GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 4,
-          crossAxisSpacing: 4,
-          childAspectRatio: 1.0,
-          children: cells,
+          itemCount: cells.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 7,
+            mainAxisExtent: 44,
+            mainAxisSpacing: 4,
+            crossAxisSpacing: 4,
+          ),
+          itemBuilder: (_, i) => cells[i],
         ),
       ],
     );
