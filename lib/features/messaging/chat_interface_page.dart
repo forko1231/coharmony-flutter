@@ -283,21 +283,12 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       }
       older.sort((a, b) => a.timestamp.compareTo(b.timestamp));
       if (!mounted) return;
-      // Anchor the viewport: inserting older messages ABOVE in a forward list
-      // grows the content above the current offset. Capture the metrics now and
-      // re-add the inserted height after layout so the user stays on the same
-      // message instead of being yanked to the top (which also caused runaway
-      // re-pagination).
-      final oldMax = _scroll.hasClients ? _scroll.position.maxScrollExtent : 0.0;
-      final oldOffset = _scroll.hasClients ? _scroll.offset : 0.0;
+      // With reverse:true the list is anchored at the bottom, so prepending
+      // older messages (they render at the visual top / far end) does NOT move
+      // the current viewport — no manual scroll anchoring needed.
       setState(() {
         _messages.insertAll(0, older);
         _displayedIds.addAll(older.map((m) => m.messageId));
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_scroll.hasClients) return;
-        final newMax = _scroll.position.maxScrollExtent;
-        _scroll.jumpTo((oldOffset + (newMax - oldMax)).clamp(0.0, newMax));
       });
     } catch (_) {
       // non-fatal
@@ -513,16 +504,18 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
 
   // ── Scroll / format helpers ──────────────────────────────────────────────────
   void _onScroll() {
-    if (_scroll.position.pixels <= 50 && _hasMore && !_loadingOlder) {
+    // reverse:true → the TOP (oldest end) is near maxScrollExtent.
+    if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 50 &&
+        _hasMore &&
+        !_loadingOlder) {
       _loadOlder();
     }
   }
 
+  // reverse:true → the bottom (newest) is offset 0.
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) {
-        _scroll.jumpTo(_scroll.position.maxScrollExtent);
-      }
+      if (_scroll.hasClients) _scroll.jumpTo(0);
     });
   }
 
@@ -565,40 +558,47 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
                   ? const Center(child: CircularProgressIndicator())
                   : Stack(
                     children: [
-                      ListView.builder(
-                      controller: _scroll,
-                      padding: const EdgeInsets.all(16),
-                      // Messages, then a trailing footer row (delivery status +
-                      // typing bubble) when either is present.
-                      itemCount: _messages.length + ((_deliveryStatus != null || _partnerTyping) ? 1 : 0),
-                      itemBuilder: (_, i) {
-                        if (i < _messages.length) {
-                          // Tighten the gap below the last bubble when the delivery
-                          // status line is rendered right under it.
-                          final lastWithStatus = i == _messages.length - 1 &&
-                              _deliveryStatus != null &&
-                              !_partnerTyping;
-                          return Padding(
-                            padding: EdgeInsets.only(bottom: lastWithStatus ? 2 : 12),
-                            child: _bubble(context, _messages[i]),
-                          );
-                        }
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (_deliveryStatus != null)
-                              Padding(
-                                padding: const EdgeInsets.only(right: 8, bottom: 6),
-                                child: Text(_deliveryStatus!,
-                                    textAlign: TextAlign.right,
-                                    style: TextStyle(
-                                        fontSize: 11, fontWeight: FontWeight.bold, color: palette.textSecondary)),
-                              ),
-                            if (_partnerTyping) _typingBubble(context),
-                          ],
+                      Builder(builder: (_) {
+                        // reverse:true anchors the list at the BOTTOM — the first
+                        // frame opens on the newest message, and prepending older
+                        // messages at the (visual) top never shifts the viewport.
+                        // Index 0 is the bottom: the footer (delivery status +
+                        // typing) when present, otherwise the newest message.
+                        final hasFooter = _deliveryStatus != null || _partnerTyping;
+                        return ListView.builder(
+                          controller: _scroll,
+                          reverse: true,
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _messages.length + (hasFooter ? 1 : 0),
+                          itemBuilder: (_, i) {
+                            if (hasFooter && i == 0) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  if (_deliveryStatus != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 8, bottom: 6),
+                                      child: Text(_deliveryStatus!,
+                                          textAlign: TextAlign.right,
+                                          style: TextStyle(
+                                              fontSize: 11, fontWeight: FontWeight.bold, color: palette.textSecondary)),
+                                    ),
+                                  if (_partnerTyping) _typingBubble(context),
+                                ],
+                              );
+                            }
+                            // Map the reversed display index → message (newest first).
+                            final mi = _messages.length - 1 - (hasFooter ? i - 1 : i);
+                            // Tighten the gap on the newest bubble when the delivery
+                            // status sits right beneath it.
+                            final tightBottom = hasFooter && i == 1 && _deliveryStatus != null && !_partnerTyping;
+                            return Padding(
+                              padding: EdgeInsets.only(bottom: tightBottom ? 2 : 12),
+                              child: _bubble(context, _messages[mi]),
+                            );
+                          },
                         );
-                      },
-                    ),
+                      }),
                       if (_loadingOlder)
                         Positioned(
                           top: 10,
