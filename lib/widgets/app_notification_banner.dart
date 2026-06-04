@@ -73,6 +73,10 @@ class AppNotificationBanner {
         return ('icon_clipboard', const Color(0xFF14B8A6)); // Teal
       case NotificationType.custodyResponse:
         return ('icon_document', const Color(0xFF0EA5E9)); // Sky blue
+      case NotificationType.incomingCall:
+        return ('icon_phone', const Color(0xFF22C55E)); // Green
+      case NotificationType.callEnded:
+        return ('icon_phone', const Color(0xFF6B7280)); // Gray
     }
   }
 }

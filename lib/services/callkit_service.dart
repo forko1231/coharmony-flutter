@@ -108,7 +108,7 @@ class CallKitService {
     if (event == null) return;
 
     // iOS VoIP token refresh → (re)register with the server.
-    if (event.event == Event.actionDidUpdateDevicePushTokenVoIP) {
+    if (event.event == Event.actionDidUpdateDevicePushTokenVoip) {
       await _onTokenEvent(event);
       return;
     }

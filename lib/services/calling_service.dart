@@ -9,6 +9,8 @@ import 'websocket_service.dart';
 
 class CallingService {
   CallingService({required ApiClient api, required WebSocketService webSocket})
+      // public named params map to private fields, so a formal can't apply
+      // ignore: prefer_initializing_formals
       : _api = api,
         _ws = webSocket {
     _ws.onCallState.listen(_onCallState);
@@ -89,7 +91,7 @@ class CallingService {
   Future<List<CallSession>> getCallHistory(String contactEmail) async {
     final json = await _api.getJson('/api/calls/history');
     if (json == null || json is! List) return [];
-    final all = (json as List<dynamic>)
+    final all = json
         .map((e) => CallSession.fromJson(e as Map<String, dynamic>))
         .toList();
     return all

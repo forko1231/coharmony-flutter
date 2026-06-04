@@ -196,8 +196,10 @@ class _CallScreenState extends State<CallScreen> {
   Widget? _localVideo() {
     final pubs = widget.room.localParticipant?.videoTrackPublications ?? const [];
     for (final pub in pubs) {
+      // Local video publications are LocalVideoTrack (a VideoTrack); a null check
+      // narrows the nullable getter so the renderer accepts it.
       final track = pub.track;
-      if (track is VideoTrack) return VideoTrackRenderer(track);
+      if (track != null) return VideoTrackRenderer(track);
     }
     return null;
   }
