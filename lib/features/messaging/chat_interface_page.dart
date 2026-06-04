@@ -257,7 +257,9 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
 
   Future<void> _loadOlder() async {
     if (_loadingOlder || !_hasMore || _loading) return;
-    _loadingOlder = true;
+    // Flip synchronously so re-entrant scroll events bail, and show the top
+    // loading indicator while we fetch.
+    setState(() => _loadingOlder = true);
     try {
       final next = _page + 1;
       final raw = await ServiceLocator.messaging.getContactMessages(_recipient, page: next, pageSize: _pageSize);
@@ -283,14 +285,26 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       }
       older.sort((a, b) => a.timestamp.compareTo(b.timestamp));
       if (!mounted) return;
+      // Anchor the viewport: inserting older messages ABOVE in a forward list
+      // grows the content above the current offset. Capture the metrics now and
+      // re-add the inserted height after layout so the user stays on the same
+      // message instead of being yanked to the top (which also caused runaway
+      // re-pagination).
+      final oldMax = _scroll.hasClients ? _scroll.position.maxScrollExtent : 0.0;
+      final oldOffset = _scroll.hasClients ? _scroll.offset : 0.0;
       setState(() {
         _messages.insertAll(0, older);
         _displayedIds.addAll(older.map((m) => m.messageId));
       });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_scroll.hasClients) return;
+        final newMax = _scroll.position.maxScrollExtent;
+        _scroll.jumpTo((oldOffset + (newMax - oldMax)).clamp(0.0, newMax));
+      });
     } catch (_) {
       // non-fatal
     } finally {
-      _loadingOlder = false;
+      if (mounted) setState(() => _loadingOlder = false);
     }
   }
 
@@ -550,7 +564,9 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
               color: palette.background,
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
-                  : ListView.builder(
+                  : Stack(
+                    children: [
+                      ListView.builder(
                       controller: _scroll,
                       padding: const EdgeInsets.all(16),
                       // Messages, then a trailing footer row (delivery status +
@@ -584,6 +600,29 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
                         );
                       },
                     ),
+                      if (_loadingOlder)
+                        Positioned(
+                          top: 10,
+                          left: 0,
+                          right: 0,
+                          child: Center(
+                            child: Container(
+                              width: 34,
+                              height: 34,
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: palette.surfaceElevated,
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 8),
+                                ],
+                              ),
+                              child: const CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
             ),
             ),
           ),
@@ -1266,7 +1305,11 @@ class _AttachmentThumb extends StatefulWidget {
 }
 
 class _AttachmentThumbState extends State<_AttachmentThumb> {
-  static const double _side = 180.0;
+  // Fixed thumbnail box. Both the loading placeholder AND the decoded image use
+  // these exact dimensions (BoxFit.cover), so the image resolving in does NOT
+  // change the bubble height — which previously caused a jarring scroll jump.
+  static const double _w = 180.0;
+  static const double _h = 135.0;
 
   Uint8List? _bytes;
   bool _failed = false;
@@ -1303,8 +1346,8 @@ class _AttachmentThumbState extends State<_AttachmentThumb> {
   // Fixed-size box shared by the loading / failed / decode-error states so the
   // bubble doesn't jump as the image resolves.
   Widget _fallback({required bool spinner}) => Container(
-        width: _side,
-        height: 120,
+        width: _w,
+        height: _h,
         color: widget.placeholderColor,
         alignment: Alignment.center,
         child: spinner
@@ -1319,15 +1362,16 @@ class _AttachmentThumbState extends State<_AttachmentThumb> {
   Widget build(BuildContext context) {
     final bytes = _bytes;
     if (bytes != null) {
-      return ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: _side, maxHeight: _side),
+      return SizedBox(
+        width: _w,
+        height: _h,
         child: Image.memory(
           bytes,
           fit: BoxFit.cover,
           gaplessPlayback: true,
           // Downsample large photos to the display size — a multi-MB image
           // decoded at full resolution wastes memory and can fail/jank on iOS.
-          cacheWidth: (_side * MediaQuery.devicePixelRatioOf(context)).round(),
+          cacheWidth: (_w * MediaQuery.devicePixelRatioOf(context)).round(),
           // A corrupt/partial/undecodable payload shows the icon instead of a
           // broken render or a thrown exception in layout.
           errorBuilder: (_, _, _) => _fallback(spinner: false),
