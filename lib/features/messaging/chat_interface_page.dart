@@ -655,46 +655,9 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
               ),
             ),
           ),
-          Expanded(
-            child: Column(
-              children: [
-                Text(widget.contactName,
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: palette.textPrimary)),
-                const SizedBox(height: 2),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    AppIcon('icon_lock', size: 12, color: palette.textSecondary),
-                    const SizedBox(width: 4),
-                    Text('Encrypted', style: TextStyle(fontSize: 11, color: palette.textSecondary)),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          // Voice + video call buttons (optional — gated by the calling setting).
-          if (Preferences.getBool('calling_enabled', true)) ...[
-            GestureDetector(
-              onTap: () => _startCall(video: false),
-              child: Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(color: AppColors.accentTeal, borderRadius: BorderRadius.circular(14)),
-                child: const Center(child: Icon(Icons.call, color: Colors.white, size: 20)),
-              ),
-            ),
-            const SizedBox(width: 6),
-            GestureDetector(
-              onTap: () => _startCall(video: true),
-              child: Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(color: AppColors.primaryBlue, borderRadius: BorderRadius.circular(14)),
-                child: const Center(child: Icon(Icons.videocam, color: Colors.white, size: 20)),
-              ),
-            ),
-            const SizedBox(width: 6),
-          ],
+          // Tapping the name opens a call dropdown (voice / video) when calling
+          // is enabled — keeps the header uncluttered vs. always-on buttons.
+          Expanded(child: _contactHeading(context)),
           Container(
             width: 44,
             height: 44,
@@ -703,6 +666,72 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
           ),
         ],
       ),
+    );
+  }
+
+  /// The centered name + "Encrypted" subtitle. When calling is enabled the name
+  /// becomes a dropdown (with a caret) offering voice / video call.
+  Widget _contactHeading(BuildContext context) {
+    final palette = context.palette;
+    final callingEnabled = Preferences.getBool('calling_enabled', true);
+
+    final heading = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(
+              child: Text(widget.contactName,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+            ),
+            if (callingEnabled) ...[
+              const SizedBox(width: 2),
+              Icon(Icons.keyboard_arrow_down, size: 20, color: palette.textSecondary),
+            ],
+          ],
+        ),
+        const SizedBox(height: 2),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AppIcon('icon_lock', size: 12, color: palette.textSecondary),
+            const SizedBox(width: 4),
+            Text('Encrypted', style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+          ],
+        ),
+      ],
+    );
+
+    if (!callingEnabled) return heading;
+
+    return PopupMenuButton<bool>(
+      tooltip: 'Call ${widget.contactName}',
+      offset: const Offset(0, 44),
+      color: palette.surfaceElevated,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      onSelected: (video) => _startCall(video: video),
+      itemBuilder: (_) => [
+        PopupMenuItem<bool>(
+          value: false,
+          child: Row(children: [
+            const Icon(Icons.call, size: 20, color: AppColors.accentTeal),
+            const SizedBox(width: 12),
+            Text('Voice call', style: TextStyle(color: palette.textPrimary)),
+          ]),
+        ),
+        PopupMenuItem<bool>(
+          value: true,
+          child: Row(children: [
+            const Icon(Icons.videocam, size: 20, color: AppColors.primaryBlue),
+            const SizedBox(width: 12),
+            Text('Video call', style: TextStyle(color: palette.textPrimary)),
+          ]),
+        ),
+      ],
+      child: heading,
     );
   }
 

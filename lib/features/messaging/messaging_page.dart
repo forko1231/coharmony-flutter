@@ -442,13 +442,13 @@ class _MessagingPageState extends State<MessagingPage> {
   }
 
   Widget _cardCallButton({required IconData icon, required Color color, required VoidCallback onTap}) {
+    // Inline icon, no colored background — just the tinted glyph.
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        width: 38,
-        height: 38,
-        decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
-        child: Icon(icon, size: 18, color: color),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Icon(icon, size: 22, color: color),
       ),
     );
   }

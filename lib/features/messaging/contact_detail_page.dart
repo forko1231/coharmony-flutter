@@ -182,20 +182,20 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Inline icon in its accent colour, no colored background box.
     return GestureDetector(
       onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)),
-            child: Icon(icon, color: Colors.white, size: 26),
-          ),
-          const SizedBox(height: 6),
-          Text(label, style: TextStyle(fontSize: 12, color: context.palette.textSecondary)),
-        ],
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 30),
+            const SizedBox(height: 6),
+            Text(label, style: TextStyle(fontSize: 12, color: context.palette.textSecondary)),
+          ],
+        ),
       ),
     );
   }

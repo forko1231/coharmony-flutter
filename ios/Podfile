@@ -39,5 +39,16 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    target.build_configurations.each do |config|
+      # Enable the microphone + camera permission handlers in permission_handler.
+      # Without these macros the iOS handlers are NOT compiled in, so
+      # Permission.microphone.request() returns "denied" WITHOUT ever showing the
+      # system prompt — which makes the call buttons look dead (no prompt, no call).
+      defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
+      defs = [defs] if defs.is_a?(String)
+      defs += ['PERMISSION_MICROPHONE=1', 'PERMISSION_CAMERA=1']
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs.uniq
+    end
   end
 end
