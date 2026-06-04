@@ -115,8 +115,10 @@ class MessagingService {
     return _parseMessages(json);
   }
 
-  Future<AttachmentModel?> getAttachment(int messageId) async {
-    final json = await _api.getJson('api/messages/attachment/$messageId');
+  /// Fetches one attachment's payload (client decrypts). [index] selects which
+  /// file when a message carries several (server defaults to 0).
+  Future<AttachmentModel?> getAttachment(int messageId, {int index = 0}) async {
+    final json = await _api.getJson('api/messages/attachment/$messageId?index=$index');
     return json is Map<String, dynamic> ? AttachmentModel.fromJson(json) : null;
   }
 

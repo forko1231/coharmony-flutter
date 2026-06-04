@@ -19,7 +19,8 @@ import '../../widgets/app_icon.dart';
 /// immersive image viewer, and the system viewer for documents/videos, plus
 /// search + extension filtering. Pure local filesystem — no API (matches MAUI).
 class FileVaultPage extends StatefulWidget {
-  const FileVaultPage({super.key, this.pickFile = false, this.pickFolder = false});
+  const FileVaultPage(
+      {super.key, this.pickFile = false, this.pickFolder = false, this.pickFiles = false});
 
   /// File-picker mode (MAUI's `Filevault(false, true)`): tapping a file pops the
   /// page returning its path instead of opening it. Folders still navigate.
@@ -29,6 +30,11 @@ class FileVaultPage extends StatefulWidget {
   /// Folder-picker mode (MAUI's `Filevault(true)`): drill into folders, then tap
   /// "Save Here" to pop the chosen directory path. Used by chat "Save to Vault".
   final bool pickFolder;
+
+  /// Multi-file-picker mode: tapping files toggles selection; an "Attach N" bar
+  /// pops the list of chosen file paths. Used by the chat composer to attach
+  /// several vault files to one message.
+  final bool pickFiles;
 
   @override
   State<FileVaultPage> createState() => _FileVaultPageState();
@@ -150,7 +156,11 @@ class _FileVaultPageState extends State<FileVaultPage> {
 
   bool get _atRoot => _root != null && _current.path == _root!.path;
   String get _title => _atRoot
-      ? (widget.pickFolder ? 'Choose Folder' : (widget.pickFile ? 'Select from Vault' : 'File Vault'))
+      ? (widget.pickFolder
+          ? 'Choose Folder'
+          : (widget.pickFiles
+              ? 'Select Files'
+              : (widget.pickFile ? 'Select from Vault' : 'File Vault')))
       : p.basename(_current.path);
   List<_FsItem> get _selectedItems => _items.where((i) => i.selected).toList();
 
@@ -187,6 +197,9 @@ class _FileVaultPageState extends State<FileVaultPage> {
     }
     if (item.isFolder) {
       await _navigateTo(item);
+    } else if (widget.pickFiles) {
+      // Multi-file-picker: tapping a file toggles its selection.
+      setState(() => item.selected = !item.selected);
     } else if (widget.pickFolder) {
       // Folder-picker mode: files aren't selectable; only folders + "Save Here".
       return;
@@ -590,8 +603,47 @@ class _FileVaultPageState extends State<FileVaultPage> {
                 ),
               ],
             ),
-            if (widget.pickFolder) _saveHereBar(context) else _fab(context),
+            if (widget.pickFolder)
+              _saveHereBar(context)
+            else if (widget.pickFiles)
+              _attachSelectedBar(context)
+            else
+              _fab(context),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Multi-file-picker mode: a bottom "Attach N file(s)" button that pops the
+  /// list of selected file paths back to the chat composer.
+  Widget _attachSelectedBar(BuildContext context) {
+    final selected = _selectedItems.where((i) => !i.isFolder).toList();
+    if (selected.isEmpty) return const SizedBox.shrink();
+    return Positioned(
+      left: 20,
+      right: 20,
+      bottom: 32,
+      child: SafeArea(
+        top: false,
+        child: GestureDetector(
+          onTap: () => Navigator.of(context).pop(selected.map((i) => i.path).toList()),
+          child: Container(
+            height: 52,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.primaryBlue,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                    color: AppColors.primaryBlue.withValues(alpha: 0.3),
+                    offset: const Offset(0, 4),
+                    blurRadius: 12),
+              ],
+            ),
+            child: Text('Attach ${selected.length} file${selected.length == 1 ? '' : 's'}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+          ),
         ),
       ),
     );

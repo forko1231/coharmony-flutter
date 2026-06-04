@@ -92,22 +92,20 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
   // the real one — kept distinct from real ids so reconciliation can't collide.
   int _nextTempId = -1;
 
-  // Decrypted attachment bytes cached by message id for the lifetime of the
-  // open thread, so re-tapping an attachment doesn't refetch + redecrypt.
-  final Map<int, List<int>> _attachmentBytesCache = {};
+  // Decrypted attachment bytes cached by "messageId:index" for the lifetime of
+  // the open thread, so re-tapping an attachment doesn't refetch + redecrypt.
+  final Map<String, List<int>> _attachmentBytesCache = {};
 
   late final String _me;
   late final String _recipient;
 
   bool _loading = true;
   bool _sending = false;
-  // Pending attachment selected for the next outgoing message.
-  String? _pendingAttachmentBase64;
-  String? _pendingAttachmentFileName;
-  // Raw bytes decoded ONCE at pick time, reused as a stable image provider for
-  // the compose preview (re-running base64Decode every build made the
-  // thumbnail blank on first frame and flicker on rebuilds).
-  Uint8List? _pendingAttachmentBytes;
+  // Pending attachments selected for the next outgoing message (now multiple).
+  // `bytes` is decoded ONCE at pick time and reused as a stable image provider
+  // for the compose preview (re-decoding base64 every build made thumbnails
+  // flicker / blank on first frame).
+  final List<({String base64, String fileName, Uint8List bytes})> _pendingAttachments = [];
   int _page = 1;
   static const _pageSize = 20;
   bool _hasMore = true;
@@ -383,10 +381,9 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
   Future<void> _send() async {
     if (_sending) return;
     final text = _controller.text.trim();
-    final pendingBase64 = _pendingAttachmentBase64;
-    final pendingFileName = _pendingAttachmentFileName;
-    final pendingBytes = _pendingAttachmentBytes;
-    final hasAttachment = pendingBase64 != null;
+    // Snapshot the pending attachments so we can restore them on rollback.
+    final pending = List<({String base64, String fileName, Uint8List bytes})>.from(_pendingAttachments);
+    final hasAttachment = pending.isNotEmpty;
     if (text.isEmpty && !hasAttachment) return;
 
     // Optimistic: show the message immediately with a "Sending…" status, clear
@@ -395,9 +392,11 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       messageId: _nextTempId--,
       sender: _me,
       receiver: _recipient,
-      // Placeholder transport so the attachment chip can show the file name
+      // Placeholder transport (array of names) so the chips show file names
       // while sending; replaced with the real encrypted payload on confirm.
-      attachment: hasAttachment ? jsonEncode({'fileName': pendingFileName}) : null,
+      attachment: hasAttachment
+          ? jsonEncode([for (final a in pending) {'fileName': a.fileName}])
+          : null,
       text: text,
       timestamp: DateTime.now(),
       sending: true,
@@ -406,9 +405,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       _sending = true;
       _controller.clear();
       _suggestion = null;
-      _pendingAttachmentBase64 = null;
-      _pendingAttachmentFileName = null;
-      _pendingAttachmentBytes = null;
+      _pendingAttachments.clear();
       _messages.add(optimistic);
       _recomputeDeliveryStatus();
     });
@@ -420,9 +417,9 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       setState(() {
         _messages.remove(optimistic);
         if (_controller.text.trim().isEmpty) _controller.text = text;
-        _pendingAttachmentBase64 = pendingBase64;
-        _pendingAttachmentFileName = pendingFileName;
-        _pendingAttachmentBytes = pendingBytes;
+        _pendingAttachments
+          ..clear()
+          ..addAll(pending);
         _recomputeDeliveryStatus();
       });
     }
@@ -430,17 +427,19 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
     try {
       final encrypted = await ServiceLocator.messageEncryption.encryptMessage(text, _me, _recipient);
 
-      // Build the encrypted attachment transport. The server deserializes this
-      // into AttachmentModel, whose [JsonPropertyName]s are camelCase
-      // (`fileName`/`encryptedData`) and matched case-SENSITIVELY — PascalCase
-      // keys make EncryptedData null → "Invalid attachment data" 500. MAUI's
-      // source-gen serializer emits camelCase, so we must too.
+      // Build the encrypted attachment transport as a JSON ARRAY of
+      // {fileName, encryptedData}. Keys are camelCase to match the server's
+      // case-SENSITIVE AttachmentModel ([JsonPropertyName] fileName/encryptedData);
+      // PascalCase would null out EncryptedData → "Invalid attachment data" 500.
       String? attachmentPayload;
       if (hasAttachment) {
-        final enc = await ServiceLocator.messageEncryption
-            .encryptAttachment(pendingBase64, _me, _recipient);
-        attachmentPayload =
-            jsonEncode({'fileName': pendingFileName, 'encryptedData': enc});
+        final items = <Map<String, String>>[];
+        for (final a in pending) {
+          final enc = await ServiceLocator.messageEncryption
+              .encryptAttachment(a.base64, _me, _recipient);
+          items.add({'fileName': a.fileName, 'encryptedData': enc});
+        }
+        attachmentPayload = jsonEncode(items);
       }
 
       // MAUI sends to the raw contactEmail value (server resolves "partner").
@@ -627,7 +626,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
             ),
           ),
           if (_suggestion != null) _suggestionBar(context),
-          if (_pendingAttachmentFileName != null) _attachmentPreviewBar(context),
+          if (_pendingAttachments.isNotEmpty) _attachmentPreviewBar(context),
           _inputBar(context),
         ],
       ),
@@ -717,7 +716,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (m.hasAttachment) ...[
-                  _attachmentChip(context, m, outgoing),
+                  _attachments(context, m, outgoing),
                   if (m.text.isNotEmpty) const SizedBox(height: 8),
                 ],
                 if (m.text.isNotEmpty)
@@ -737,35 +736,54 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
   // ── Attachments ────────────────────────────────────────────────────────────
   static const _imageExts = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'};
 
-  /// Extracts the (plaintext) file name from the attachment metadata/transport JSON.
-  String _attachmentFileName(_Msg m) {
+  /// Parses the attachment transport/metadata JSON into the list of (plaintext)
+  /// file names. Tolerant of a JSON array (new, multi) OR a single object (legacy).
+  List<String> _attachmentNames(_Msg m) {
+    final raw = m.attachment;
+    if (raw == null || raw.trim().isEmpty) return const [];
+    String nameOf(dynamic e) =>
+        (e is Map ? (e['fileName'] ?? e['FileName']) : null)?.toString().trim().isNotEmpty == true
+            ? (e['fileName'] ?? e['FileName']).toString()
+            : 'Attachment';
     try {
-      final j = jsonDecode(m.attachment!);
-      if (j is Map) {
-        final name = j['FileName'] ?? j['fileName'];
-        if (name is String && name.isNotEmpty) return name;
-      }
+      final j = jsonDecode(raw);
+      if (j is List) return [for (final e in j) nameOf(e)];
+      if (j is Map) return [nameOf(j)];
     } catch (_) {/* fall through */}
-    return 'Attachment';
+    return const ['Attachment'];
   }
 
   bool _isImageName(String name) => _imageExts.contains(p.extension(name).toLowerCase());
 
-  Widget _attachmentChip(BuildContext context, _Msg m, bool outgoing) {
+  /// Renders all of a message's attachments — a single item, or a wrapped set
+  /// of thumbnails/chips for multiple.
+  Widget _attachments(BuildContext context, _Msg m, bool outgoing) {
+    final names = _attachmentNames(m);
+    if (names.isEmpty) return const SizedBox.shrink();
+    if (names.length == 1) return _attachmentItem(context, m, outgoing, 0, names[0]);
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (int i = 0; i < names.length; i++) _attachmentItem(context, m, outgoing, i, names[i]),
+      ],
+    );
+  }
+
+  Widget _attachmentItem(BuildContext context, _Msg m, bool outgoing, int index, String name) {
     final palette = context.palette;
-    final name = _attachmentFileName(m);
     final isImage = _isImageName(name);
     final fg = outgoing ? Colors.white : palette.textPrimary;
     // Image attachments (already on the server) show a lazy-loaded thumbnail
     // instead of a generic icon — the bytes are cached + reused by the viewer.
     if (isImage && !m.sending) {
       return GestureDetector(
-        onTap: () => _onAttachmentTapped(m),
+        onTap: () => _onAttachmentTapped(m, index, name),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child: _AttachmentThumb(
-            key: ValueKey('thumb_${m.messageId}'),
-            load: () => _downloadAttachmentBytes(m, silent: true),
+            key: ValueKey('thumb_${m.messageId}_$index'),
+            load: () => _downloadAttachmentBytes(m, index, silent: true),
             placeholderColor: (outgoing ? Colors.white : palette.textSecondary).withValues(alpha: 0.15),
             iconColor: fg,
           ),
@@ -773,7 +791,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       );
     }
     return GestureDetector(
-      onTap: () => _onAttachmentTapped(m),
+      onTap: () => _onAttachmentTapped(m, index, name),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
@@ -800,9 +818,8 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
   }
 
   /// Action sheet for a tapped attachment (port of OnAttachmentPreviewTapped).
-  Future<void> _onAttachmentTapped(_Msg m) async {
+  Future<void> _onAttachmentTapped(_Msg m, int index, String name) async {
     if (m.sending) return; // not yet on the server — no real id to fetch by
-    final name = _attachmentFileName(m);
     final isImage = _isImageName(name);
     final action = await showModalBottomSheet<String>(
       context: context,
@@ -832,7 +849,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
     );
     if (action == null) return;
 
-    final bytes = await _downloadAttachmentBytes(m);
+    final bytes = await _downloadAttachmentBytes(m, index);
     if (bytes == null) return;
     switch (action) {
       case 'view':
@@ -856,17 +873,17 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
   /// error alerts — used for the inline thumbnail load (a background fetch that
   /// must NOT pop a dialog over the chat if it fails); the interactive
   /// View/Save path leaves it false so the user still gets feedback.
-  Future<List<int>?> _downloadAttachmentBytes(_Msg m, {bool silent = false}) async {
+  Future<List<int>?> _downloadAttachmentBytes(_Msg m, int index, {bool silent = false}) async {
     // A negative id is an optimistic message not yet on the server — there's no
     // real attachment to fetch by id.
     if (m.messageId < 0) return null;
     // Reuse already-downloaded+decrypted bytes when the user taps the same
-    // attachment again (View, then Save, etc.) — avoids a second network round
-    // trip and AES-GCM decrypt. Keyed by the real message id.
-    final cached = _attachmentBytesCache[m.messageId];
+    // attachment again (View, then Save, etc.). Keyed by message id + index.
+    final cacheKey = '${m.messageId}:$index';
+    final cached = _attachmentBytesCache[cacheKey];
     if (cached != null) return cached;
     try {
-      final att = await ServiceLocator.messaging.getAttachment(m.messageId);
+      final att = await ServiceLocator.messaging.getAttachment(m.messageId, index: index);
       if (att == null || att.encryptedData.isEmpty) {
         if (!silent && mounted) await _alert('Error', 'Failed to download attachment data');
         return null;
@@ -880,7 +897,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
         return null;
       }
       final bytes = base64Decode(decrypted);
-      _attachmentBytesCache[m.messageId] = bytes;
+      _attachmentBytesCache[cacheKey] = bytes;
       return bytes;
     } catch (e) {
       if (!silent && mounted) await _alert('Error', 'Failed to decrypt attachment: $e');
@@ -1018,85 +1035,115 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
     );
     if (source == null) return;
     try {
-      String? path;
-      String? name;
+      // Every source is now multi-select; collect (path, name) pairs.
+      final picked = <({String path, String name})>[];
       if (source == 'vault') {
         if (!mounted) return;
-        final picked = await Navigator.of(context).push<String>(
-            MaterialPageRoute(builder: (_) => const FileVaultPage(pickFile: true)));
-        if (picked != null) {
-          path = picked;
-          name = p.basename(picked);
+        final paths = await Navigator.of(context).push<List<String>>(
+            MaterialPageRoute(builder: (_) => const FileVaultPage(pickFiles: true)));
+        if (paths != null) {
+          for (final pth in paths) {
+            picked.add((path: pth, name: p.basename(pth)));
+          }
         }
       } else if (source == 'photo') {
-        final x = await ImagePicker().pickImage(source: ImageSource.gallery);
-        if (x != null) {
-          path = x.path;
-          name = p.basename(x.path);
+        final xs = await ImagePicker().pickMultiImage();
+        for (final x in xs) {
+          picked.add((path: x.path, name: p.basename(x.path)));
         }
       } else {
-        final r = await FilePicker.platform.pickFiles(withData: false);
-        if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
-          path = r.files.first.path;
-          name = r.files.first.name;
+        final r = await FilePicker.platform.pickFiles(allowMultiple: true, withData: false);
+        if (r != null) {
+          for (final f in r.files) {
+            if (f.path != null) picked.add((path: f.path!, name: f.name));
+          }
         }
       }
-      if (path == null || name == null) return;
-      final bytes = await File(path).readAsBytes();
+      if (picked.isEmpty) return;
+      final added = <({String base64, String fileName, Uint8List bytes})>[];
+      for (final it in picked) {
+        final bytes = await File(it.path).readAsBytes();
+        added.add((base64: base64Encode(bytes), fileName: it.name, bytes: bytes));
+      }
       if (!mounted) return;
-      setState(() {
-        _pendingAttachmentBase64 = base64Encode(bytes);
-        _pendingAttachmentFileName = name;
-        _pendingAttachmentBytes = bytes;
-      });
+      setState(() => _pendingAttachments.addAll(added));
     } catch (e) {
       if (mounted) await _alert('Error', 'Could not attach file: $e');
     }
   }
 
   Widget _attachmentPreviewBar(BuildContext context) {
-    final palette = context.palette;
-    final name = _pendingAttachmentFileName ?? '';
-    final isImage = _isImageName(name);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       color: context.isDark ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6),
-      child: Row(
-        children: [
-          if (isImage && _pendingAttachmentBytes != null)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.memory(
-                _pendingAttachmentBytes!,
-                width: 40,
-                height: 40,
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-                cacheWidth: (40 * MediaQuery.devicePixelRatioOf(context)).round(),
-                errorBuilder: (_, _, _) =>
-                    AppIcon('icon_image', size: 20, color: palette.textSecondary),
-              ),
-            )
-          else
-            AppIcon(isImage ? 'icon_image' : 'icon_document', size: 20, color: palette.textSecondary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 14, color: palette.textPrimary)),
-          ),
-          GestureDetector(
-            onTap: () => setState(() {
-              _pendingAttachmentBase64 = null;
-              _pendingAttachmentFileName = null;
-              _pendingAttachmentBytes = null;
-            }),
-            child: AppIcon('icon_close', size: 18, color: palette.textSecondary),
-          ),
-        ],
+      child: SizedBox(
+        height: 64,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: _pendingAttachments.length,
+          separatorBuilder: (_, _) => const SizedBox(width: 10),
+          itemBuilder: (_, i) => _pendingPreviewTile(context, i),
+        ),
       ),
+    );
+  }
+
+  Widget _pendingPreviewTile(BuildContext context, int i) {
+    final palette = context.palette;
+    final a = _pendingAttachments[i];
+    final isImage = _isImageName(a.fileName);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: 120,
+          height: 64,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: palette.surfaceElevated,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              if (isImage)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.memory(
+                    a.bytes,
+                    width: 40,
+                    height: 40,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    cacheWidth: (40 * MediaQuery.devicePixelRatioOf(context)).round(),
+                    errorBuilder: (_, _, _) => AppIcon('icon_image', size: 20, color: palette.textSecondary),
+                  ),
+                )
+              else
+                AppIcon('icon_document', size: 22, color: palette.textSecondary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(a.fileName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: palette.textPrimary)),
+              ),
+            ],
+          ),
+        ),
+        Positioned(
+          top: -6,
+          right: -6,
+          child: GestureDetector(
+            onTap: () => setState(() => _pendingAttachments.removeAt(i)),
+            child: Container(
+              decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+              padding: const EdgeInsets.all(3),
+              child: const Icon(Icons.close, size: 14, color: Colors.white),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
