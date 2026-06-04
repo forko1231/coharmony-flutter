@@ -58,8 +58,12 @@ import flutter_callkit_incoming
     }
 
     // The backend nests the call fields under "data"; fall back to top level.
+    // `dictionaryPayload` is [AnyHashable: Any]; coerce to [String: Any] (VoIP
+    // payload keys are strings) so the lookups below are well-typed.
     let root = payload.dictionaryPayload
-    let data = (root["data"] as? [String: Any]) ?? root
+    let data: [String: Any] = (root["data"] as? [String: Any])
+      ?? (root as? [String: Any])
+      ?? [:]
 
     let roomName = (data["roomName"] as? String) ?? ""
     let callerName = (data["callerName"] as? String) ?? "Incoming call"
