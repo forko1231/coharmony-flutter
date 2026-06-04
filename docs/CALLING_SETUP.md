@@ -28,9 +28,28 @@ Adds `livekit_client`, `permission_handler`, `flutter_callkit_incoming`, `uuid`.
 ## 3. Whisper microservice (Azure)
 - Deploy `whisper-service/` (FastAPI + openai-whisper) as an Azure Container App.
 - Set `Whisper__BaseUrl` in Key Vault (e.g. `https://whisper.ez-split.com`).
-- Transcription only runs when a call has a `RecordingUrl`. To get recordings,
-  enable **LiveKit Egress** (room composite → Azure Blob) and write the blob URL
-  onto the `CallSession.RecordingUrl` before `EndCallAsync` (TODO: egress webhook).
+
+## 3b. Recording + transcription (LiveKit Egress) — now wired
+The full chain is implemented; you just deploy Egress and set config:
+
+1. **Run LiveKit Egress** (its own container) + **Redis** alongside `livekit-server`
+   (egress coordinates with the SFU through Redis). See LiveKit's `egress` Docker image.
+2. **Azure Blob container** for recordings (default `call-recordings`). The backend
+   passes your `AzureStorage__ConnectionString` account name/key to egress as the
+   output target, so no extra storage setup is needed.
+3. **Config** (Key Vault / appsettings):
+   - `LiveKit__ApiUrl` — https API URL (e.g. `https://livekit.ez-split.com`). If
+     omitted, derived from `LiveKit__Url` by swapping `wss`→`https`.
+   - `CallRecordings__Container` — optional, defaults to `call-recordings`.
+4. **Point LiveKit's webhook at the backend**: in the LiveKit server config set
+   `webhook.urls: ["https://api.ez-split.com/api/calls/egress-webhook"]` and
+   `webhook.api_key: <LiveKit api key>`. The backend verifies the signed request.
+
+**Flow:** recipient answers → backend starts **audio-only** egress to Azure Blob →
+call ends → backend stops egress → LiveKit finalizes the file and POSTs
+`egress_ended` → `/api/calls/egress-webhook` writes a short-lived SAS URL to
+`CallSession.RecordingUrl`, calls Whisper, and saves `Transcript`. The transcript
+then shows in the Contact page.
 
 ## 4. Backend DB migration
 ```bash
