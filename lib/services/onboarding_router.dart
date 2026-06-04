@@ -33,14 +33,16 @@ class OnboardingRouter {
       return OnboardingDestination.mainApp;
     }
 
-    // Already-established accounts shouldn't be re-onboarded. MAUI relied on the
-    // local completion flag persisting on the device the user onboarded with; a
-    // fresh install (or the Flutter app on a device that onboarded via MAUI) has
-    // no such flag, so we infer it from server state: a linked partner AND an
-    // approved schedule means setup is genuinely done. Conservative on purpose —
-    // a real mid-onboarding account has neither, so this never skips real setup.
-    if (await _looksAlreadyOnboarded()) {
-      return completeOnboarding();
+    // Already-established accounts shouldn't be re-onboarded. The server now holds
+    // an OnboardingComplete flag (set on completion, or backfilled for accounts that
+    // already have a partner + approved schedule), so a fresh install / new device
+    // is recognized as done. We still gate the paywall separately below — being
+    // onboarded doesn't grant a subscription.
+    if (await _isAlreadyOnboarded()) {
+      OnboardingState.markCompleted();
+      _auth.markOnboardingComplete(); // persist server-side (fire-and-forget)
+      if (!await _hasActiveSubscription()) return OnboardingDestination.subscription;
+      return OnboardingDestination.mainApp;
     }
 
     // Step 0: role choice (parent vs child).
@@ -103,6 +105,7 @@ class OnboardingRouter {
   /// CompleteOnboardingAsync).
   OnboardingDestination completeOnboarding() {
     OnboardingState.markCompleted();
+    _auth.markOnboardingComplete(); // persist to DB (fire-and-forget)
     AnalyticsService.trackCustom('onboarding_completed');
     return OnboardingDestination.mainApp;
   }
@@ -133,17 +136,25 @@ class OnboardingRouter {
   /// PartnerEmail is pre-populated for BOTH sides the moment an invite is sent, so
   /// its presence alone is NOT "linked". The invitee (InviteStatus "invited") must
   /// accept first; the inviter ("inviting") and confirmed ("true") proceed.
-  /// True only when EVERY onboarding gate is already satisfied server-side: a
-  /// linked partner, an approved custody schedule, AND an active subscription.
-  /// Requiring all three means short-circuiting to "complete" can never bypass a
-  /// gate (notably the paywall), and a genuinely new/mid-onboarding account — which
-  /// lacks at least one — always runs the real flow.
-  Future<bool> _looksAlreadyOnboarded() async {
+  /// Whether the account is already past onboarding. Trusts the server's
+  /// OnboardingComplete flag first (set on completion, or backfilled for
+  /// established accounts); falls back to inferring it from a linked partner + an
+  /// approved schedule in case the server backfill hasn't run yet. Deliberately
+  /// independent of subscription — the paywall is a SEPARATE gate, enforced by the
+  /// caller. Conflating the two is exactly what dragged established-but-unsubscribed
+  /// accounts back through onboarding (and mangled their schedule into a proposal).
+  Future<bool> _isAlreadyOnboarded() async {
     try {
-      if (!await _isPartnerLinked()) return false;
+      final info = await _auth.getUserInfo();
+      if (info?.onboardingComplete == true) return true;
+
+      final partnerLinked = info != null &&
+          (info.partnerEmail ?? '').isNotEmpty &&
+          (info.inviteStatus ?? '').toLowerCase() != 'invited';
+      if (!partnerLinked) return false;
+
       final approved = await _proposals.getApprovedSchedule();
-      if (approved?.hasSchedule != true) return false;
-      return await _hasActiveSubscription();
+      return approved?.hasSchedule == true;
     } catch (_) {
       return false;
     }

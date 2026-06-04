@@ -136,6 +136,16 @@ class AuthService {
     }
   }
 
+  /// Persists onboarding completion server-side so the user is never re-onboarded
+  /// on a fresh install / new device. Best-effort (fire-and-forget).
+  Future<void> markOnboardingComplete() async {
+    try {
+      await _api.postJson('api/auth/onboarding-complete', <String, dynamic>{});
+    } catch (_) {
+      // Non-fatal: local completion still stands; backfill will catch it later.
+    }
+  }
+
   /// SECURITY: when changing email or password, [currentPassword] MUST be
   /// supplied or the server rejects the request.
   Future<String> updateUserInfo({

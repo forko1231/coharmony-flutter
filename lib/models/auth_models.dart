@@ -205,6 +205,7 @@ class UserInfo {
     this.bankName,
     this.accountNumberPreview,
     this.accountType,
+    this.onboardingComplete = false,
   });
   final String? email;
   final String? firstName;
@@ -220,6 +221,7 @@ class UserInfo {
   final String? bankName;
   final String? accountNumberPreview;
   final String? accountType;
+  final bool onboardingComplete;
   factory UserInfo.fromJson(Map<String, dynamic> j) {
     // CRITICAL: the server builds this response with `JsonSerializer.Serialize(userInfo)`
     // on a plain class with NO [JsonPropertyName] attributes, so the keys come back
@@ -249,6 +251,7 @@ class UserInfo {
       bankName: m['bankname'] as String?,
       accountNumberPreview: m['accountnumberpreview'] as String?,
       accountType: m['accounttype'] as String?,
+      onboardingComplete: boolOf('onboardingcomplete'),
     );
   }
 }
