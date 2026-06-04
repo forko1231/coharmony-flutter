@@ -56,7 +56,7 @@ class ServiceLocator {
   /// e.g. 'wss://livekit.ez-split.com'
   static const String livekitUrl = String.fromEnvironment(
     'LIVEKIT_URL',
-    defaultValue: 'wss://livekit.ez-split.com',
+    defaultValue: 'wss://coharmony-hg32gbwv.livekit.cloud',
   );
   static late final OnboardingRouter onboardingRouter;
   static late final PostAuthRouter postAuthRouter;
