@@ -52,24 +52,35 @@ dotnet ef database update   # or let the app apply on startup
   runtime prompt for this category.
 
 ## 6. iOS — CallKit + VoIP push (PushKit)
-This is the part that needs Xcode + Apple setup:
 
-1. **Capabilities** (Xcode → Signing & Capabilities):
-   - Push Notifications
-   - Background Modes → **Voice over IP**, **Audio**, **Remote notifications**
-   - (Info.plist already has `UIBackgroundModes: audio, voip` + mic/camera strings.)
-2. **PushKit registration** in `ios/Runner/AppDelegate.swift`: register for VoIP
-   pushes and forward them to `SwiftFlutterCallkitIncomingPlugin.sharedInstance`
-   so CallKit shows the incoming call. See the plugin README "iOS Setup".
-3. **VoIP certificate**: create a **VoIP Services certificate** in the Apple
-   Developer portal and upload it to the **Azure Notification Hub** APNs settings
-   (push type *voip*). The backend already sets `apns-push-type: voip` headers in
-   `SendCallPushAsync`; without the VoIP cert the hub will reject/downgrade it.
-4. Register the iOS device token with the hub (the current `PushService` is
-   Android-only — iOS device registration must be added when VoIP is enabled).
+**Already wired in code:**
+- `ios/Runner/AppDelegate.swift` — PushKit registration, VoIP-token forwarding,
+  and `didReceiveIncomingPushWith` → reports the call to CallKit (Apple requires
+  this on every VoIP push).
+- `ios/Runner/Runner.entitlements` (`aps-environment`) created and referenced from
+  all three Runner build configs in the Xcode project.
+- `Info.plist` has `UIBackgroundModes: audio, voip` + mic/camera usage strings.
+- Dart registers the VoIP token with the server post-login
+  (`CallKitService.registerVoipToken`, called from the dashboards) and re-registers
+  on token refresh. Backend sends `apns-push-type: voip` + `apns-topic:
+  com.456746.ezsplit.voip` (override via `Apple:VoipTopic`).
 
-> Until the iOS VoIP cert + AppDelegate wiring is done, iOS calls work **only while
-> the app is foregrounded** (the WebSocket ring still shows the native CallKit UI).
+**You still need to do (Apple account — can't be done in code):**
+1. **Xcode capabilities** (Runner target → Signing & Capabilities) — tick the boxes
+   so the provisioning profile includes them: **Push Notifications** and
+   **Background Modes → Voice over IP + Audio**. (The entitlement/plist entries
+   already exist; this makes the signing profile match.)
+2. **APNs credential on Azure Notification Hub** — create an **APNs Auth Key (.p8)**
+   in the Apple Developer portal and add it to your Notification Hub's Apple (APNS)
+   settings with the **Key ID**, **Team ID**, and **App Bundle ID**
+   `com.456746.ezsplit`. Token (.p8) auth lets the hub sign for the `.voip` topic.
+   (A VoIP Services .p12 cert also works but a .p8 key is simpler and never expires.)
+3. `pod install` in `ios/` after `flutter pub get` so the `flutter_callkit_incoming`
+   pod (imported by `AppDelegate.swift`) is built.
+
+> With the .p8 key uploaded and the two capabilities ticked, iOS calls ring the
+> native CallKit screen even when the app is killed. Until then, iOS still rings via
+> the foreground WebSocket path.
 
 ## 7. In-app entry points
 - **Messages list**: each contact card has inline **voice** + **video** buttons;

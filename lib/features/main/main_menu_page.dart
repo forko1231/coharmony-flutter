@@ -67,6 +67,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
     super.initState();
     _load();
     ServiceLocator.push.init(); // FCM token register (Android only; no-op on iOS)
+    ServiceLocator.callKit.registerVoipToken(); // iOS VoIP token register (no-op on Android)
     ServiceLocator.messaging.onMessageReceived.listen((_) {
       if (mounted) _loadMessages();
     });

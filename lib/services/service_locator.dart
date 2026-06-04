@@ -98,7 +98,7 @@ class ServiceLocator {
     aiChat = AiChatService(api);
     calling = CallingService(api: api, webSocket: webSocket);
     AppNavigation.livekitUrl = livekitUrl;
-    callKit = CallKitService(calling)..start();
+    callKit = CallKitService(calling, notifications)..start();
     // Foreground WebSocket rings → native CallKit/full-screen incoming UI.
     webSocket.onCallIncoming.listen(callKit.showIncoming);
     // Dismiss the native UI when the caller cancels or the call ends/rejects.

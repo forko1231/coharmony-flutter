@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
@@ -9,6 +10,7 @@ import '../features/calling/call_screen.dart';
 import '../models/call_models.dart';
 import 'app_navigation.dart';
 import 'calling_service.dart';
+import 'notification_service.dart';
 import 'preferences.dart';
 
 /// Drives the NATIVE incoming-call experience (CallKit on iOS, full-screen
@@ -22,9 +24,10 @@ import 'preferences.dart';
 /// CallKit button taps come back through [FlutterCallkitIncoming.onEvent]; we
 /// translate accept/decline/end into [CallingService] calls and navigation.
 class CallKitService {
-  CallKitService(this._calling);
+  CallKitService(this._calling, this._notifications);
 
   final CallingService _calling;
+  final NotificationService _notifications;
   final _uuid = const Uuid();
 
   // Map the CallKit call UUID ↔ our LiveKit room name so events can be correlated.
@@ -38,6 +41,19 @@ class CallKitService {
     if (_started) return;
     _started = true;
     FlutterCallkitIncoming.onEvent.listen(_onEvent);
+  }
+
+  /// Fetches the current iOS VoIP push token and registers it with the server
+  /// (Azure Notification Hub) so call pushes can reach this device. Call after
+  /// login. No-op on Android (which uses FCM instead).
+  Future<void> registerVoipToken() async {
+    if (!Platform.isIOS) return;
+    try {
+      final token = await FlutterCallkitIncoming.getDevicePushTokenVoIP();
+      if (token is String && token.isNotEmpty) {
+        await _notifications.registerDeviceToken(deviceToken: token, platform: 'ios');
+      }
+    } catch (_) {/* best-effort */}
   }
 
   /// Shows the native incoming-call UI for a foreground WebSocket ring.
@@ -90,6 +106,13 @@ class CallKitService {
 
   Future<void> _onEvent(CallEvent? event) async {
     if (event == null) return;
+
+    // iOS VoIP token refresh → (re)register with the server.
+    if (event.event == Event.actionDidUpdateDevicePushTokenVoIP) {
+      await _onTokenEvent(event);
+      return;
+    }
+
     final body = event.body as Map?;
     final callId = body?['id']?.toString();
     // Prefer the in-memory record; fall back to CallKit's `extra` so a call
@@ -112,6 +135,14 @@ class CallKitService {
         break;
       default:
         break;
+    }
+  }
+
+  /// Handles the iOS VoIP token push event separately (no call id/extra here).
+  Future<void> _onTokenEvent(CallEvent event) async {
+    final token = (event.body as Map?)?['deviceTokenVoIP']?.toString();
+    if (token != null && token.isNotEmpty) {
+      await _notifications.registerDeviceToken(deviceToken: token, platform: 'ios');
     }
   }
 
