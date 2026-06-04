@@ -66,9 +66,12 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<!-- image_picker: camera + photo library (receipt photos) -->
+	<!-- image_picker + livekit_client: camera for receipt photos and video calls -->
 	<key>NSCameraUsageDescription</key>
-	<string>CoHarmony uses the camera so you can attach a receipt photo to a payment.</string>
+	<string>CoHarmony uses the camera to attach receipt photos and for video calls.</string>
+	<!-- livekit_client: microphone for voice and video calls -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>CoHarmony needs your microphone for voice and video calls.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>CoHarmony needs photo access so you can attach a receipt image to a payment.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
@@ -81,6 +84,12 @@
 	<string>CoHarmony uses your location to record custody-transfer and visit locations.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>CoHarmony uses your location to record custody-transfer and visit locations.</string>
+	<!-- livekit_client: keep audio session alive when app is backgrounded during a call -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>voip</string>
+	</array>
 	<!-- url_launcher: open the maps app for the location-record Navigate action -->
 	<key>LSApplicationQueriesSchemes</key>
 	<array>

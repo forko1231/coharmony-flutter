@@ -1,5 +1,6 @@
 import 'address_search_service.dart';
 import 'ai_chat_service.dart';
+import 'calling_service.dart';
 import 'auth_service.dart';
 import 'api_client.dart';
 import 'custody_proposal_service.dart';
@@ -46,6 +47,14 @@ class ServiceLocator {
   static late final SubscriptionService subscription;
   static late final IapService iap;
   static late final AiChatService aiChat;
+  static late final CallingService calling;
+
+  /// LiveKit server URL — set this to your deployed LiveKit instance.
+  /// e.g. 'wss://livekit.ez-split.com'
+  static const String livekitUrl = String.fromEnvironment(
+    'LIVEKIT_URL',
+    defaultValue: 'wss://livekit.ez-split.com',
+  );
   static late final OnboardingRouter onboardingRouter;
   static late final PostAuthRouter postAuthRouter;
   static late final KeyManagementService keyManagement;
@@ -84,6 +93,7 @@ class ServiceLocator {
     subscription = SubscriptionService(api);
     iap = IapService(subscription)..init();
     aiChat = AiChatService(api);
+    calling = CallingService(api: api, webSocket: webSocket);
     onboardingRouter = OnboardingRouter(auth, custodyProposal, subscription);
     postAuthRouter = PostAuthRouter(auth, subscription);
 

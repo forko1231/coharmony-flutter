@@ -3,6 +3,7 @@ import '../../services/app_navigation.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
 import '../../widgets/app_icon.dart';
+import '../calling/incoming_call_overlay.dart';
 import '../main/main_menu_page.dart';
 import '../schedule/schedule_page.dart';
 import '../messaging/messaging_page.dart';
@@ -57,7 +58,7 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    return Scaffold(
+    return IncomingCallOverlay(child: Scaffold(
       backgroundColor: palette.background,
       body: AppShellScope(
         goToTab: (i) {
@@ -91,7 +92,7 @@ class _AppShellState extends State<AppShell> {
           ],
         ),
       ),
-    );
+    ));
   }
 }
 

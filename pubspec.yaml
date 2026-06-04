@@ -69,6 +69,10 @@ dependencies:
   path: ^1.9.0               # join/basename/extension for the File Vault paths
   gal: ^2.3.0                # save chat image attachments to the camera roll
 
+  # Voice/video calling (LiveKit WebRTC SFU)
+  livekit_client: ^2.3.0
+  permission_handler: ^11.3.0  # mic + camera runtime permissions
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

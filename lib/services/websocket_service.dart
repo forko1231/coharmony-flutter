@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:web_socket_channel/io.dart';
 
+import '../models/call_models.dart';
 import '../models/message_models.dart';
 import 'api_client.dart';
 
@@ -33,9 +34,19 @@ class WebSocketService {
 
   final StreamController<WebSocketMessage> _messages =
       StreamController<WebSocketMessage>.broadcast();
+  final StreamController<IncomingCallEvent> _callIncoming =
+      StreamController<IncomingCallEvent>.broadcast();
+  final StreamController<CallStateEvent> _callState =
+      StreamController<CallStateEvent>.broadcast();
 
   /// Stream of inbound `new_message` / `messages_read` / `typing` messages.
   Stream<WebSocketMessage> get messages => _messages.stream;
+
+  /// Fires when the server pushes a `call_incoming` notification.
+  Stream<IncomingCallEvent> get onCallIncoming => _callIncoming.stream;
+
+  /// Fires for `call_accepted`, `call_rejected`, and `call_ended` events.
+  Stream<CallStateEvent> get onCallState => _callState.stream;
 
   bool get isConnected => _isConnected && _channel != null;
 
@@ -114,14 +125,24 @@ class WebSocketService {
     try {
       final decoded = jsonDecode(data);
       if (decoded is! Map<String, dynamic>) return;
-      final msg = WebSocketMessage.fromJson(decoded);
-      switch (msg.type) {
+      final type = decoded['type'] as String? ?? '';
+      final rawData = decoded['data'] as Map<String, dynamic>? ?? {};
+
+      switch (type) {
         case 'pong':
           break; // heartbeat ack
         case 'new_message':
         case 'messages_read':
         case 'typing':
-          _messages.add(msg);
+          _messages.add(WebSocketMessage.fromJson(decoded));
+          break;
+        case 'call_incoming':
+          _callIncoming.add(IncomingCallEvent.fromJson(rawData));
+          break;
+        case 'call_accepted':
+        case 'call_rejected':
+        case 'call_ended':
+          _callState.add(CallStateEvent.fromJson(type, rawData));
           break;
         default:
           break;
@@ -164,5 +185,7 @@ class WebSocketService {
   void dispose() {
     disconnect(reconnect: false);
     _messages.close();
+    _callIncoming.close();
+    _callState.close();
   }
 }

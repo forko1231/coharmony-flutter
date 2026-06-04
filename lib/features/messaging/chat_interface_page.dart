@@ -11,8 +11,11 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../models/call_models.dart';
 import '../../models/message_models.dart';
 import '../../services/app_navigation.dart';
+import '../calling/call_history_tile.dart';
+import '../calling/call_screen.dart';
 import '../filevault/file_vault_page.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
@@ -124,6 +127,8 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
   StreamSubscription<MessagesReadEvent>? _readSub;
   StreamSubscription<PartnerTypingEvent>? _typingSub;
 
+  List<CallSession> _callHistory = [];
+
   @override
   void initState() {
     super.initState();
@@ -213,6 +218,10 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
     // Mark this contact's messages read (best-effort).
     unawaited(ServiceLocator.messaging.markMessagesAsRead(_recipient).catchError((_) => 0));
     await _loadMessages();
+    // Load call history in parallel (non-blocking).
+    ServiceLocator.calling.getCallHistory(_recipient).then((history) {
+      if (mounted) setState(() => _callHistory = history);
+    }).catchError((_) {});
   }
 
   // ── Loading ──────────────────────────────────────────────────────────────────
@@ -525,6 +534,27 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
     return '${t.month}/${t.day}/${t.year} $h:${t.minute.toString().padLeft(2, '0')} $ampm';
   }
 
+  Future<void> _startCall({required bool video}) async {
+    final ok = await ServiceLocator.calling.initiateCall(
+      _recipient,
+      video: video,
+      livekitUrl: ServiceLocator.livekitUrl,
+    );
+    if (!ok || !mounted) return;
+    final room = ServiceLocator.calling.activeRoom;
+    if (room == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => CallScreen(
+          room: room,
+          contactEmail: _recipient,
+          hasVideo: video,
+        ),
+      ),
+    );
+  }
+
   Future<void> _alert(String title, String message) async {
     if (!mounted) return;
     await showDialog<void>(
@@ -668,6 +698,28 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
               ],
             ),
           ),
+          // Voice call
+          GestureDetector(
+            onTap: () => _startCall(video: false),
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(color: AppColors.accentTeal, borderRadius: BorderRadius.circular(14)),
+              child: const Center(child: Icon(Icons.call, color: Colors.white, size: 20)),
+            ),
+          ),
+          const SizedBox(width: 6),
+          // Video call
+          GestureDetector(
+            onTap: () => _startCall(video: true),
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(color: AppColors.primaryBlue, borderRadius: BorderRadius.circular(14)),
+              child: const Center(child: Icon(Icons.videocam, color: Colors.white, size: 20)),
+            ),
+          ),
+          const SizedBox(width: 6),
           Container(
             width: 44,
             height: 44,
