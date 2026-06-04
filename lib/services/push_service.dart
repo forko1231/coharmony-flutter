@@ -2,8 +2,31 @@ import 'dart:io' show Platform;
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:uuid/uuid.dart';
 
+import 'callkit_service.dart';
 import 'notification_service.dart';
+import 'service_locator.dart';
+
+/// True when a push-data `type` denotes an incoming call.
+bool _isCallType(String? type) => (type ?? '').toLowerCase() == 'incomingcall';
+
+/// FCM background-isolate handler for call pushes. Must be a top-level,
+/// vm:entry-point function. Shows the native full-screen incoming-call UI even
+/// when the app is killed (Android data-only high-priority message).
+@pragma('vm:entry-point')
+Future<void> callFcmBackgroundHandler(RemoteMessage message) async {
+  final data = message.data;
+  if (!_isCallType(data['type']?.toString())) return;
+  await Firebase.initializeApp();
+  await showNativeIncomingCall(
+    callId: const Uuid().v4(),
+    roomName: data['roomName']?.toString() ?? '',
+    callerEmail: data['callerEmail']?.toString() ?? '',
+    callerName: data['callerName']?.toString() ?? '',
+    hasVideo: data['hasVideo']?.toString() == 'true',
+  );
+}
 
 /// Firebase Cloud Messaging — ANDROID ONLY (matches the MAUI app, which never
 /// configured iOS push). Every Firebase call is guarded by [Platform.isAndroid], so on
@@ -35,6 +58,9 @@ class PushService {
         _notifications.registerDeviceToken(deviceToken: t, platform: 'android');
       });
 
+      // Background/killed call pushes → native full-screen incoming UI.
+      FirebaseMessaging.onBackgroundMessage(callFcmBackgroundHandler);
+
       // Foreground messages → in-app banner (FCM doesn't show a system
       // notification while the app is open).
       FirebaseMessaging.onMessage.listen(_onForegroundMessage);
@@ -51,6 +77,16 @@ class PushService {
 
   void _onForegroundMessage(RemoteMessage message) {
     final data = _stringData(message.data);
+    // Incoming call → native CallKit/full-screen UI (not an in-app banner).
+    if (_isCallType(data['type'])) {
+      ServiceLocator.callKit.showIncomingFromData(
+        roomName: data['roomName'] ?? '',
+        callerEmail: data['callerEmail'] ?? '',
+        callerName: data['callerName'] ?? '',
+        hasVideo: data['hasVideo'] == 'true',
+      );
+      return;
+    }
     final type = _notifications.getNotificationType(data);
     final title = message.notification?.title ?? data['title'];
     final body = message.notification?.body ?? data['body'];

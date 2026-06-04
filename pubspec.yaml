@@ -72,6 +72,9 @@ dependencies:
   # Voice/video calling (LiveKit WebRTC SFU)
   livekit_client: ^2.3.0
   permission_handler: ^11.3.0  # mic + camera runtime permissions
+  # Native incoming-call UI: CallKit on iOS, full-screen incoming on Android
+  flutter_callkit_incoming: ^2.0.4+2
+  uuid: ^4.5.1                  # stable call UUIDs for CallKit
 
 dev_dependencies:
   flutter_test:

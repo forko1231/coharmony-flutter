@@ -1,6 +1,8 @@
 import 'address_search_service.dart';
 import 'ai_chat_service.dart';
+import 'app_navigation.dart';
 import 'calling_service.dart';
+import 'callkit_service.dart';
 import 'auth_service.dart';
 import 'api_client.dart';
 import 'custody_proposal_service.dart';
@@ -48,6 +50,7 @@ class ServiceLocator {
   static late final IapService iap;
   static late final AiChatService aiChat;
   static late final CallingService calling;
+  static late final CallKitService callKit;
 
   /// LiveKit server URL — set this to your deployed LiveKit instance.
   /// e.g. 'wss://livekit.ez-split.com'
@@ -94,6 +97,16 @@ class ServiceLocator {
     iap = IapService(subscription)..init();
     aiChat = AiChatService(api);
     calling = CallingService(api: api, webSocket: webSocket);
+    AppNavigation.livekitUrl = livekitUrl;
+    callKit = CallKitService(calling)..start();
+    // Foreground WebSocket rings → native CallKit/full-screen incoming UI.
+    webSocket.onCallIncoming.listen(callKit.showIncoming);
+    // Dismiss the native UI when the caller cancels or the call ends/rejects.
+    calling.onCallStateChanged.listen((e) {
+      if (e.type == 'call_ended' || e.type == 'call_rejected') {
+        callKit.dismiss(e.roomName);
+      }
+    });
     onboardingRouter = OnboardingRouter(auth, custodyProposal, subscription);
     postAuthRouter = PostAuthRouter(auth, subscription);
 

@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 
+import '../../models/call_models.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
 
@@ -26,34 +29,43 @@ class _CallScreenState extends State<CallScreen> {
   bool _cameraEnabled = true;
   bool _speakerEnabled = true;
 
-  final List<EventsListener<RoomEvent>> _listeners = [];
+  EventsListener<RoomEvent>? _roomListener;
+  StreamSubscription<CallStateEvent>? _stateSub;
 
   @override
   void initState() {
     super.initState();
     _cameraEnabled = widget.hasVideo;
-    _listenForCallEnd();
-  }
 
-  void _listenForCallEnd() {
-    final sub = ServiceLocator.calling.onCallStateChanged.listen((event) {
-      if ((event.type == 'call_ended') && mounted) {
+    // Rebuild whenever participants or their tracks change so the remote/local
+    // video tiles appear as soon as tracks are published/subscribed.
+    _roomListener = widget.room.createListener()
+      ..on<ParticipantConnectedEvent>((_) => _refresh())
+      ..on<ParticipantDisconnectedEvent>((_) => _refresh())
+      ..on<TrackSubscribedEvent>((_) => _refresh())
+      ..on<TrackUnsubscribedEvent>((_) => _refresh())
+      ..on<TrackPublishedEvent>((_) => _refresh())
+      ..on<TrackUnpublishedEvent>((_) => _refresh())
+      ..on<RoomDisconnectedEvent>((_) {
+        if (mounted) Navigator.of(context).pop();
+      });
+
+    // Remote hang-up arrives as a call_ended WebSocket event.
+    _stateSub = ServiceLocator.calling.onCallStateChanged.listen((event) {
+      if (event.type == 'call_ended' && mounted) {
         Navigator.of(context).pop();
       }
     });
-    // Store sub for cancel — simple approach using EventsListener
-    _listeners.add(widget.room.createListener()
-      ..on<RoomDisconnectedEvent>((_) {
-        sub.cancel();
-        if (mounted) Navigator.of(context).pop();
-      }));
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
-    for (final l in _listeners) {
-      l.dispose();
-    }
+    _stateSub?.cancel();
+    _roomListener?.dispose();
     super.dispose();
   }
 
@@ -72,18 +84,25 @@ class _CallScreenState extends State<CallScreen> {
     setState(() => _cameraEnabled = !_cameraEnabled);
   }
 
+  void _toggleSpeaker() {
+    final next = !_speakerEnabled;
+    Hardware.instance.setSpeakerphoneOn(next);
+    setState(() => _speakerEnabled = next);
+  }
+
   @override
   Widget build(BuildContext context) {
     final participants = widget.room.remoteParticipants.values.toList();
+    final remoteVideo = _firstRemoteVideoTrack(participants);
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
         child: Stack(
           children: [
-            // Remote video (full screen)
-            if (widget.hasVideo && participants.isNotEmpty)
-              _RemoteVideoView(participant: participants.first)
+            // Remote video (full screen) or avatar placeholder
+            if (widget.hasVideo && remoteVideo != null)
+              Positioned.fill(child: VideoTrackRenderer(remoteVideo))
             else
               Center(
                 child: Column(
@@ -100,16 +119,16 @@ class _CallScreenState extends State<CallScreen> {
                       style: const TextStyle(color: Colors.white, fontSize: 18),
                     ),
                     const SizedBox(height: 8),
-                    const Text(
-                      'Connected',
-                      style: TextStyle(color: Colors.white54, fontSize: 14),
+                    Text(
+                      participants.isEmpty ? 'Ringing…' : 'Connected',
+                      style: const TextStyle(color: Colors.white54, fontSize: 14),
                     ),
                   ],
                 ),
               ),
 
             // Local camera PiP (top-right)
-            if (widget.hasVideo)
+            if (widget.hasVideo && _cameraEnabled)
               Positioned(
                 top: 16,
                 right: 16,
@@ -118,7 +137,7 @@ class _CallScreenState extends State<CallScreen> {
                   height: 120,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: _LocalVideoView(localParticipant: widget.room.localParticipant!),
+                    child: _localVideo() ?? const ColoredBox(color: Colors.black87),
                   ),
                 ),
               ),
@@ -153,7 +172,7 @@ class _CallScreenState extends State<CallScreen> {
                     _ControlButton(
                       icon: _speakerEnabled ? Icons.volume_up : Icons.volume_off,
                       label: _speakerEnabled ? 'Speaker' : 'Earpiece',
-                      onTap: () => setState(() => _speakerEnabled = !_speakerEnabled),
+                      onTap: _toggleSpeaker,
                     ),
                 ],
               ),
@@ -163,31 +182,24 @@ class _CallScreenState extends State<CallScreen> {
       ),
     );
   }
-}
 
-class _RemoteVideoView extends StatelessWidget {
-  const _RemoteVideoView({required this.participant});
-  final RemoteParticipant participant;
-
-  @override
-  Widget build(BuildContext context) {
-    final videoTrack = participant.videoTrackPublications.firstOrNull?.track;
-    if (videoTrack == null) return const SizedBox.expand(child: ColoredBox(color: Colors.black));
-    return SizedBox.expand(
-      child: VideoTrackRenderer(videoTrack),
-    );
+  VideoTrack? _firstRemoteVideoTrack(List<RemoteParticipant> participants) {
+    for (final p in participants) {
+      for (final pub in p.videoTrackPublications) {
+        final track = pub.track;
+        if (pub.subscribed && track is VideoTrack) return track;
+      }
+    }
+    return null;
   }
-}
 
-class _LocalVideoView extends StatelessWidget {
-  const _LocalVideoView({required this.localParticipant});
-  final LocalParticipant localParticipant;
-
-  @override
-  Widget build(BuildContext context) {
-    final videoTrack = localParticipant.videoTrackPublications.firstOrNull?.track;
-    if (videoTrack == null) return const ColoredBox(color: Colors.black87);
-    return VideoTrackRenderer(videoTrack as VideoTrack);
+  Widget? _localVideo() {
+    final pubs = widget.room.localParticipant?.videoTrackPublications ?? const [];
+    for (final pub in pubs) {
+      final track = pub.track;
+      if (track is VideoTrack) return VideoTrackRenderer(track);
+    }
+    return null;
   }
 }
 

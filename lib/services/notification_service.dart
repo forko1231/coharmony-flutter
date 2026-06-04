@@ -22,6 +22,8 @@ enum NotificationType {
   courtMessage,
   custodyResponse,
   custodyUpdate,
+  incomingCall,
+  callEnded,
 }
 
 /// Port of `Services/NotificationService.cs`.
@@ -159,6 +161,17 @@ class NotificationService {
     importance: Importance.high,
   );
 
+  /// Dedicated max-importance channel for calls (separate sound, heads-up, and
+  /// bypasses Do-Not-Disturb where allowed). The native CallKit full-screen UI
+  /// is the primary surface; this backs the missed-call / fallback notification.
+  static const _callsChannel = AndroidNotificationChannel(
+    'coharmony_calls',
+    'Calls',
+    description: 'Incoming and missed voice/video calls',
+    importance: Importance.max,
+    playSound: true,
+  );
+
   /// Initialises the local-notifications plugin + Android channel. The tap
   /// callback routes via [handleNotificationTapped] using the payload type.
   Future<void> initLocalNotifications() async {
@@ -174,9 +187,10 @@ class NotificationService {
         }
       },
     );
-    await _localNotifications
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(_androidChannel);
+    final androidImpl = _localNotifications
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    await androidImpl?.createNotificationChannel(_androidChannel);
+    await androidImpl?.createNotificationChannel(_callsChannel);
     _localInitialized = true;
   }
 
@@ -251,6 +265,12 @@ class NotificationService {
       case NotificationType.custodyResponse:
         AppNavigation.goToTab?.call(1);
         break;
+      case NotificationType.incomingCall:
+      case NotificationType.callEnded:
+        // Calls are handled natively (CallKit); tapping a missed-call entry
+        // just opens the Messager tab where the call history lives.
+        AppNavigation.goToTab?.call(2);
+        break;
     }
   }
 
@@ -279,6 +299,10 @@ class NotificationService {
         return NotificationType.custodyResponse;
       case 'custodyupdate':
         return NotificationType.custodyUpdate;
+      case 'incomingcall':
+        return NotificationType.incomingCall;
+      case 'callended':
+        return NotificationType.callEnded;
       default:
         return NotificationType.messageReceived;
     }
@@ -306,6 +330,10 @@ class NotificationService {
         return 'Custody Update';
       case NotificationType.custodyResponse:
         return 'Custody Response';
+      case NotificationType.incomingCall:
+        return 'Incoming Call';
+      case NotificationType.callEnded:
+        return 'Missed Call';
     }
   }
 

@@ -9,7 +9,9 @@ import '../../theme/app_palette.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/skeleton.dart';
 import '../ai/ai_chat_page.dart';
+import '../calling/call_actions.dart';
 import 'chat_interface_page.dart';
+import 'contact_detail_page.dart';
 
 /// Messages hub — faithful port of `Views/Messaging/Messaging.xaml(.cs)`.
 ///
@@ -365,27 +367,25 @@ class _MessagingPageState extends State<MessagingPage> {
 
   Widget _contactCard(BuildContext context, _Contact c) {
     final palette = context.palette;
+    final callingEnabled = Preferences.getBool('calling_enabled', true);
     return GestureDetector(
-      onTap: () async {
-        await Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => ChatInterfacePage(contactEmail: c.email, contactName: c.name),
-          ),
-        );
-        if (mounted) _load(silent: true); // refresh unread state on return
-      },
+      onTap: () => _openChat(c),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(color: palette.surfaceElevated, borderRadius: BorderRadius.circular(20)),
         child: Row(
           children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(color: c.avatarColor, borderRadius: BorderRadius.circular(16)),
-              child: Center(
-                child: Text(_initials(c.name),
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+            // Avatar → contact detail page (call history + transcripts + actions).
+            GestureDetector(
+              onTap: () => _openContact(c),
+              child: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(color: c.avatarColor, borderRadius: BorderRadius.circular(16)),
+                child: Center(
+                  child: Text(_initials(c.name),
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                ),
               ),
             ),
             const SizedBox(width: 14),
@@ -405,7 +405,21 @@ class _MessagingPageState extends State<MessagingPage> {
                 ],
               ),
             ),
-            const SizedBox(width: 8),
+            // Quick call/video buttons (optional — gated by the calling setting).
+            if (callingEnabled) ...[
+              _cardCallButton(
+                icon: Icons.call,
+                color: AppColors.accentTeal,
+                onTap: () => _callContact(c, video: false),
+              ),
+              const SizedBox(width: 6),
+              _cardCallButton(
+                icon: Icons.videocam,
+                color: AppColors.primaryBlue,
+                onTap: () => _callContact(c, video: true),
+              ),
+              const SizedBox(width: 8),
+            ],
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -426,6 +440,43 @@ class _MessagingPageState extends State<MessagingPage> {
       ),
     );
   }
+
+  Widget _cardCallButton({required IconData icon, required Color color, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+        child: Icon(icon, size: 18, color: color),
+      ),
+    );
+  }
+
+  Future<void> _openChat(_Contact c) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatInterfacePage(contactEmail: c.email, contactName: c.name),
+      ),
+    );
+    if (mounted) _load(silent: true); // refresh unread state on return
+  }
+
+  Future<void> _openContact(_Contact c) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ContactDetailPage(
+          contactEmail: c.email,
+          contactName: c.name,
+          avatarColor: c.avatarColor,
+        ),
+      ),
+    );
+    if (mounted) _load(silent: true);
+  }
+
+  Future<void> _callContact(_Contact c, {required bool video}) =>
+      startOutgoingCall(context, c.email, video: video);
 
   // ── Security card ─────────────────────────────────────────────────────────────
   Widget _securityCard(BuildContext context) {
