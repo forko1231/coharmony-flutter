@@ -36,10 +36,17 @@ class _BootstrapPageState extends State<BootstrapPage> {
       next = const LandingPage();
     }
     if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => next),
-      (route) => false,
-    );
+    // Defer to after the current frame. On the logged-out path _decide completes
+    // synchronously (the && short-circuits before any await), so navigating inline
+    // would run during initState while the Navigator is still locked → a
+    // "!_debugLocked" assertion. A post-frame callback guarantees it's unlocked.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => next),
+        (route) => false,
+      );
+    });
   }
 
   @override

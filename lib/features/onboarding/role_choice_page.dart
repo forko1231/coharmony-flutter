@@ -24,11 +24,36 @@ class RoleChoicePage extends StatefulWidget {
 
 class _RoleChoicePageState extends State<RoleChoicePage> {
   bool _busy = false;
+  bool _checking = true; // resolving whether an invite already implies the role
 
   @override
   void initState() {
     super.initState();
     OnboardingState.markStarted();
+    _maybeAutoSkip();
+  }
+
+  /// If this account was invited — as a child, or as a co-parent — the role is
+  /// already implied, so skip the parent/child choice entirely and route onward.
+  Future<void> _maybeAutoSkip() async {
+    try {
+      final childInvite = await ServiceLocator.auth.checkChildInvite();
+      if (childInvite.hasInvites && childInvite.invites.isNotEmpty) {
+        await _chooseChild();
+        return;
+      }
+      final info = await ServiceLocator.auth.getUserInfo();
+      final invitedCoParent = info != null &&
+          (info.partnerEmail ?? '').isNotEmpty &&
+          (info.inviteStatus ?? '').toLowerCase() == 'invited';
+      if (invitedCoParent) {
+        await _chooseParent();
+        return;
+      }
+    } catch (_) {
+      // Couldn't resolve — fall through to the manual choice.
+    }
+    if (mounted) setState(() => _checking = false);
   }
 
   Future<void> _chooseParent() async {
@@ -76,6 +101,11 @@ class _RoleChoicePageState extends State<RoleChoicePage> {
 
   @override
   Widget build(BuildContext context) {
+    // While resolving an implied role (invited child / co-parent) show a spinner
+    // rather than flashing the parent/child choice.
+    if (_checking) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final palette = context.palette;
     return Scaffold(
       backgroundColor: palette.background,

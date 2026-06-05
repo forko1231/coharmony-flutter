@@ -41,19 +41,24 @@ class _CallScreenState extends State<CallScreen> {
     // video tiles appear as soon as tracks are published/subscribed.
     _roomListener = widget.room.createListener()
       ..on<ParticipantConnectedEvent>((_) => _refresh())
-      ..on<ParticipantDisconnectedEvent>((_) => _refresh())
+      ..on<ParticipantDisconnectedEvent>((_) {
+        _refresh();
+        // The other party left the room — end the call on this side too, even if
+        // the call_ended WebSocket event never arrives. Without this the local
+        // user is stuck on the call screen / native CallKit UI after a remote
+        // hang-up.
+        if (widget.room.remoteParticipants.isEmpty) _endAndClose();
+      })
       ..on<TrackSubscribedEvent>((_) => _refresh())
       ..on<TrackUnsubscribedEvent>((_) => _refresh())
       ..on<TrackPublishedEvent>((_) => _refresh())
       ..on<TrackUnpublishedEvent>((_) => _refresh())
-      ..on<RoomDisconnectedEvent>((_) {
-        if (mounted) Navigator.of(context).pop();
-      });
+      ..on<RoomDisconnectedEvent>((_) => _endAndClose());
 
     // Remote hang-up arrives as a call_ended WebSocket event.
     _stateSub = ServiceLocator.calling.onCallStateChanged.listen((event) {
-      if (event.type == 'call_ended' && mounted) {
-        Navigator.of(context).pop();
+      if (event.type == 'call_ended' || event.type == 'call_rejected') {
+        _endAndClose();
       }
     });
   }
@@ -69,9 +74,23 @@ class _CallScreenState extends State<CallScreen> {
     super.dispose();
   }
 
-  Future<void> _hangUp() async {
-    await ServiceLocator.calling.endCall();
-    if (mounted) Navigator.of(context).pop();
+  Future<void> _hangUp() => _endAndClose();
+
+  /// Single termination path for every way a call can end (local hang-up, remote
+  /// hang-up, room disconnect, server call_ended). Idempotent: tears down the
+  /// LiveKit room, clears any native CallKit UI, and closes the screen exactly
+  /// once.
+  bool _closing = false;
+  Future<void> _endAndClose() async {
+    if (_closing) return;
+    _closing = true;
+    try {
+      await ServiceLocator.calling.endCall();
+    } catch (_) {/* best-effort */}
+    try {
+      await ServiceLocator.callKit.dismissAll();
+    } catch (_) {/* best-effort */}
+    if (mounted) Navigator.of(context).maybePop();
   }
 
   void _toggleMic() {
