@@ -652,7 +652,19 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
       final reviewingPartnerProposal =
           _hasActiveProposal && _activeProposal != null && !_activeProposal!.isCurrentUserProposer;
 
-      if ((_isEditingCounterProposal || reviewingPartnerProposal) && _activeProposal != null) {
+      if (reviewingPartnerProposal && !_isEditingCounterProposal && !hasAnyChanges && _activeProposal != null) {
+        // Saving the partner's proposal with no modifications is an AGREEMENT, not a
+        // counter. Previously this fell through and submitted an identical
+        // counter-proposal — confusing, especially during onboarding.
+        final result = await svc.approveProposal(_activeProposal!.proposalId);
+        if (result?.success == true) {
+          AnalyticsService.trackCustom('schedule_accepted_unchanged');
+          await _alert('Success', 'Schedule accepted!');
+          await _exitAfterSave();
+        } else {
+          await _alert('Error', 'Failed to accept the schedule. Please try again.');
+        }
+      } else if ((_isEditingCounterProposal || reviewingPartnerProposal) && _activeProposal != null) {
         // Counter-proposal off the partner's proposal.
         final counter = await svc.createCounterProposal(_activeProposal!.proposalId);
         if (counter == null) {
