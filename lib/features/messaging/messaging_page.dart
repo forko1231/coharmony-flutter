@@ -229,10 +229,13 @@ class _MessagingPageState extends State<MessagingPage> {
               loading: _loading,
               skeleton: const SkeletonListTiles(),
               child: SingleChildScrollView(
-                // Top padding 0: the header already supplies the gap below it, so a
-                // second top inset here produced an oversized header->AI-card gap.
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                child: Center(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                // topCenter, not center: Center vertically-centers the column, so when
+                // there are few contacts (e.g. only a co-parent) it floated to the
+                // middle of the viewport, leaving a gap below the header. Top-aligning
+                // keeps the content pinned under the header in every state.
+                child: Align(
+                  alignment: Alignment.topCenter,
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 640),
                     child: Column(
@@ -262,7 +265,7 @@ class _MessagingPageState extends State<MessagingPage> {
   Widget _header(BuildContext context) {
     final palette = context.palette;
     return Container(
-      padding: EdgeInsets.fromLTRB(24, MediaQuery.viewPaddingOf(context).top + 12, 24, 12),
+      padding: EdgeInsets.fromLTRB(24, MediaQuery.viewPaddingOf(context).top + 12, 24, 20),
       decoration: BoxDecoration(
         color: palette.surface,
         boxShadow: [
