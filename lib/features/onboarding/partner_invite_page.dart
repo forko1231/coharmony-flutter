@@ -257,6 +257,33 @@ class _PartnerInvitePageState extends State<PartnerInvitePage> {
         const SizedBox(height: 10),
         Text("CoHarmony works best when you're both connected. We'll send them an invite to get started.",
             textAlign: TextAlign.center, style: TextStyle(fontSize: 15, color: palette.textSecondary)),
+        const SizedBox(height: 16),
+
+        // Gentle expectation-setter for co-parents doing setup at the same time.
+        // Deliberately low-key (soft gray, no alarm color) so it informs without
+        // competing with the amber "Important" note below.
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            color: context.isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('👋', style: TextStyle(fontSize: 15)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Setting up together? Invite each other and you\'ll connect instantly. '
+                  'One of you sets up the first schedule — then you\'ll both review it and '
+                  'can adjust any day.',
+                  style: TextStyle(fontSize: 12.5, height: 1.35, color: palette.textSecondary),
+                ),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 32),
 
         // Email card
