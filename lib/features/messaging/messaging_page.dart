@@ -229,7 +229,9 @@ class _MessagingPageState extends State<MessagingPage> {
               loading: _loading,
               skeleton: const SkeletonListTiles(),
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                // Top padding 0: the header already supplies the gap below it, so a
+                // second top inset here produced an oversized header->AI-card gap.
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
                 child: Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 640),
@@ -260,7 +262,7 @@ class _MessagingPageState extends State<MessagingPage> {
   Widget _header(BuildContext context) {
     final palette = context.palette;
     return Container(
-      padding: EdgeInsets.fromLTRB(24, MediaQuery.viewPaddingOf(context).top + 12, 24, 20),
+      padding: EdgeInsets.fromLTRB(24, MediaQuery.viewPaddingOf(context).top + 12, 24, 12),
       decoration: BoxDecoration(
         color: palette.surface,
         boxShadow: [
