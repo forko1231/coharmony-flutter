@@ -125,6 +125,26 @@ class _MessagingPageState extends State<MessagingPage> {
           avatarColor: AppColors.primaryBlue,
           hasUnread: data?.unread ?? false,
         ));
+      } else if (partner.valid && partner.status == 'pending_sent') {
+        // Invite sent but not connected yet — show the co-parent as a pending row
+        // so the section isn't empty and the user can see the invite is live.
+        final pendingEmail = partner.inviterEmail ?? '';
+        final status = !partner.partnerHasAccount
+            ? 'Invite sent — not on CoHarmony yet'
+            : !partner.partnerSubscribed
+                ? 'Invite sent — joined, not subscribed'
+                : 'Invite sent — awaiting accept';
+        if (pendingEmail.isNotEmpty) {
+          coParent.add(_Contact(
+            email: pendingEmail,
+            name: _nameFromEmail(pendingEmail),
+            lastMessage: status,
+            time: '',
+            avatarColor: AppColors.warningAmber,
+            hasUnread: false,
+            pending: true,
+          ));
+        }
       }
       byContact.forEach((email, d) {
         final contact = _Contact(
@@ -369,7 +389,7 @@ class _MessagingPageState extends State<MessagingPage> {
     final palette = context.palette;
     final callingEnabled = Preferences.getBool('calling_enabled', true);
     return GestureDetector(
-      onTap: () => _openChat(c),
+      onTap: () => c.pending ? _showPendingInfo(c) : _openChat(c),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(color: palette.surfaceElevated, borderRadius: BorderRadius.circular(20)),
@@ -377,7 +397,7 @@ class _MessagingPageState extends State<MessagingPage> {
           children: [
             // Avatar → contact detail page (call history + transcripts + actions).
             GestureDetector(
-              onTap: () => _openContact(c),
+              onTap: () => c.pending ? _showPendingInfo(c) : _openContact(c),
               child: Container(
                 width: 48,
                 height: 48,
@@ -405,8 +425,9 @@ class _MessagingPageState extends State<MessagingPage> {
                 ],
               ),
             ),
-            // Quick call/video buttons (optional — gated by the calling setting).
-            if (callingEnabled) ...[
+            // Quick call/video buttons (optional — gated by the calling setting;
+            // hidden for a pending co-parent who isn't reachable yet).
+            if (callingEnabled && !c.pending) ...[
               _cardCallButton(
                 icon: Icons.call,
                 color: AppColors.accentTeal,
@@ -477,6 +498,20 @@ class _MessagingPageState extends State<MessagingPage> {
 
   Future<void> _callContact(_Contact c, {required bool video}) =>
       startOutgoingCall(context, c.email, video: video);
+
+  Future<void> _showPendingInfo(_Contact c) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Invitation pending'),
+        content: Text(
+          "${c.email} hasn't connected yet. You'll be able to message and call them "
+          'once they accept your co-parent invitation.',
+        ),
+        actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('OK'))],
+      ),
+    );
+  }
 
   // ── Security card ─────────────────────────────────────────────────────────────
   Widget _securityCard(BuildContext context) {
@@ -556,6 +591,9 @@ class _Contact {
   final String time;
   final Color avatarColor;
   final bool hasUnread;
+  /// A co-parent who was invited but hasn't connected yet — shown as a status
+  /// row (no chat / no call until they accept).
+  final bool pending;
   const _Contact({
     required this.email,
     required this.name,
@@ -563,5 +601,6 @@ class _Contact {
     required this.time,
     required this.avatarColor,
     required this.hasUnread,
+    this.pending = false,
   });
 }

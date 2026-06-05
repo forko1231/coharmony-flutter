@@ -49,6 +49,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
   List<LocationRecord> _locations = const [];
 
   bool _partnerSynced = false;
+  bool _partnerPending = false; // invite sent, awaiting the co-parent
   String _partnerName = '';
   String _partnerEmail = '';
   final Set<String> _lawyerEmails = {};
@@ -129,11 +130,14 @@ class _MainMenuPageState extends State<MainMenuPage> {
     try {
       final info = await ServiceLocator.auth.checkForInvite();
       _partnerSynced = info.synced;
+      _partnerPending = info.valid && !info.synced && info.status == 'pending_sent';
       if (info.synced) {
         _partnerEmail = info.inviterEmail ?? '';
         _partnerName = (info.inviterName?.isNotEmpty ?? false) ? info.inviterName! : _nameFromEmail(_partnerEmail);
         await Preferences.setString('partnerEmail', _partnerEmail);
         if (_partnerEmail.isNotEmpty) _contactNames[_partnerEmail.toLowerCase()] = _partnerName;
+      } else if (_partnerPending) {
+        _partnerEmail = info.inviterEmail ?? '';
       }
     } catch (_) {}
   }
@@ -955,6 +959,21 @@ class _MainMenuPageState extends State<MainMenuPage> {
 
   Widget _coParentCard(BuildContext context) {
     final palette = context.palette;
+    final bg = _partnerSynced
+        ? AppColors.iconBgGreen
+        : _partnerPending
+            ? AppColors.iconBgYellow
+            : AppColors.iconBgRed;
+    final tint = _partnerSynced
+        ? AppColors.successGreen
+        : _partnerPending
+            ? AppColors.warningAmber
+            : AppColors.dangerRed;
+    final subtitle = _partnerSynced && _partnerName.isNotEmpty
+        ? 'Connected with $_partnerName'
+        : _partnerPending
+            ? 'Invitation pending${_partnerEmail.isNotEmpty ? ' — $_partnerEmail' : ''}'
+            : 'Not connected with partner';
     return _card(
       context,
       onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PartnerPage())),
@@ -963,10 +982,8 @@ class _MainMenuPageState extends State<MainMenuPage> {
           Container(
             width: 56,
             height: 56,
-            decoration: BoxDecoration(
-                color: _partnerSynced ? AppColors.iconBgGreen : AppColors.iconBgRed, borderRadius: BorderRadius.circular(16)),
-            child: Center(
-                child: AppIcon('icon_people', size: 28, color: _partnerSynced ? AppColors.successGreen : AppColors.dangerRed)),
+            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(16)),
+            child: Center(child: AppIcon('icon_people', size: 28, color: tint)),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -976,8 +993,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
                 Text('Co-Parent Status',
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: palette.textPrimary)),
                 const SizedBox(height: 4),
-                Text(_partnerSynced && _partnerName.isNotEmpty ? 'Connected with $_partnerName' : 'Not connected with partner',
-                    style: TextStyle(fontSize: 14, color: palette.textSecondary)),
+                Text(subtitle, style: TextStyle(fontSize: 14, color: palette.textSecondary)),
               ],
             ),
           ),

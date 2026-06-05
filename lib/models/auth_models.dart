@@ -263,18 +263,26 @@ class PartnerInviteInfo {
     this.inviterEmail,
     this.synced = false,
     this.status,
+    this.partnerHasAccount = false,
+    this.partnerSubscribed = false,
   });
   final bool valid;
   final String? inviterName;
   final String? inviterEmail;
   final bool synced;
   final String? status;
+  /// Whether the invited/inviting partner has a CoHarmony account yet.
+  final bool partnerHasAccount;
+  /// Whether that partner currently has an active subscription.
+  final bool partnerSubscribed;
   factory PartnerInviteInfo.fromJson(Map<String, dynamic> j) => PartnerInviteInfo(
         valid: j['valid'] as bool? ?? false,
         inviterName: j['inviterName'] as String?,
         inviterEmail: j['inviterEmail'] as String?,
         synced: j['synced'] as bool? ?? false,
         status: j['status'] as String?,
+        partnerHasAccount: j['partnerHasAccount'] as bool? ?? false,
+        partnerSubscribed: j['partnerSubscribed'] as bool? ?? false,
       );
 }
 

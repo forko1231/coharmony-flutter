@@ -213,8 +213,10 @@ class _PartnerPageState extends State<PartnerPage> {
               ],
             ),
           ] else if (pendingSent) ...[
-            _emptyRow(context, 'Invitation pending',
-                "You've invited $email to connect. They'll need to accept your invitation."),
+            _personRow(context, email.isNotEmpty ? email : 'Invited co-parent', email, AppColors.warningAmber,
+                badge: _pendingBadge(p!), badgeColor: _pendingBadgeColor(p)),
+            const SizedBox(height: 8),
+            _emptyRow(context, 'Invitation pending', _pendingHint(p, email)),
           ] else ...[
             _inviteRow(context,
                 controller: _partnerInvite,
@@ -226,6 +228,30 @@ class _PartnerPageState extends State<PartnerPage> {
         ],
       ),
     );
+  }
+
+  // Status of a co-parent you've invited but who hasn't connected yet.
+  static String _pendingBadge(PartnerInviteInfo p) {
+    if (!p.partnerHasAccount) return 'Not on CoHarmony';
+    if (!p.partnerSubscribed) return 'Not subscribed';
+    return 'Awaiting accept';
+  }
+
+  static Color _pendingBadgeColor(PartnerInviteInfo p) {
+    if (!p.partnerHasAccount) return AppColors.warningAmber;
+    if (!p.partnerSubscribed) return AppColors.infoBlue;
+    return AppColors.primaryBlue;
+  }
+
+  static String _pendingHint(PartnerInviteInfo p, String email) {
+    final who = email.isNotEmpty ? email : 'Your co-parent';
+    if (!p.partnerHasAccount) {
+      return "$who needs to sign up for CoHarmony with this exact email, then accept your invitation to connect.";
+    }
+    if (!p.partnerSubscribed) {
+      return "$who has a CoHarmony account but no active subscription yet. You'll connect once they subscribe and accept.";
+    }
+    return "$who has joined — they just need to accept your invitation to connect.";
   }
 
   // ── Children card (synced only) ─────────────────────────────────────────────────
