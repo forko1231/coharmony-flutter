@@ -1070,22 +1070,23 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
               children: [
                 Text(title,
                     textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: palette.textPrimary)),
                 const SizedBox(height: 4),
                 Text(subtitle,
                     textAlign: TextAlign.center,
+                    // Cap the wrapping — some subtitles are long and looked bad
+                    // spilling onto 3+ lines on small screens.
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 13, color: palette.textSecondary)),
               ],
             ),
           ),
-          _smallSquare(
-            context,
-            bg: context.isDark ? const Color(0xFF374151) : const Color(0xFFF3F4F6),
-            radius: 20,
-            child: const Text('?',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.primaryBlue)),
-            onTap: _showOnboarding,
-          ),
+          // Help lives in the hamburger menu now ("How it works") — keep a spacer
+          // the width of the back button so the title stays centered.
+          const SizedBox(width: 40),
         ],
       ),
     );
