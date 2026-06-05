@@ -16,6 +16,7 @@ import '../../theme/app_palette.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/skeleton.dart';
 import '../ai/ai_chat_page.dart';
+import '../calling/call_permissions_primer.dart';
 import '../filevault/file_vault_page.dart';
 import '../messaging/chat_interface_page.dart';
 import '../schedule/custody_schedule_page.dart';
@@ -71,6 +72,12 @@ class _MainMenuPageState extends State<MainMenuPage> {
     ServiceLocator.callKit.registerVoipToken(); // iOS VoIP token register (no-op on Android)
     ServiceLocator.messaging.onMessageReceived.listen((_) {
       if (mounted) _loadMessages();
+    });
+    // First time on the dashboard after onboarding/subscription: prime calling
+    // permissions so incoming calls (which may arrive while killed/locked, where
+    // the OS can't prompt) can be answered. One-time; gated inside.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) maybeShowCallPermissionsPrimer(context);
     });
   }
 
