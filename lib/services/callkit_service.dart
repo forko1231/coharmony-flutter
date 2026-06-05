@@ -34,6 +34,26 @@ class CallKitService {
   final Map<String, _PendingCall> _byCallId = {};
   final Map<String, String> _callIdByRoom = {};
 
+  // Rooms already accepted/declined/ended. The server rings BOTH over the
+  // WebSocket and via push, so a second (late) ring for the same call can arrive
+  // after it's been handled — showing a phantom incoming call that, when
+  // dismissed, fires a decline → a spurious /reject that kills the live call.
+  // Once a room is handled we suppress any further ring for it. Room names are
+  // GUIDs (never reused), so this can never hide a legitimate new call.
+  final Set<String> _handledRooms = {};
+  final Set<String> _acceptedRooms = {}; // rooms we answered — never reject these
+  final Map<String, Timer> _handledTimers = {};
+
+  void _markHandled(String roomName) {
+    _handledRooms.add(roomName);
+    _handledTimers[roomName]?.cancel();
+    _handledTimers[roomName] = Timer(const Duration(seconds: 90), () {
+      _handledRooms.remove(roomName);
+      _acceptedRooms.remove(roomName);
+      _handledTimers.remove(roomName);
+    });
+  }
+
   bool _started = false;
 
   /// Begins listening for CallKit button events. Call once at app startup.
@@ -75,6 +95,12 @@ class CallKitService {
   }) async {
     // Respect the user's calling preference (optional feature).
     if (!Preferences.getBool('calling_enabled', true)) return;
+    // Suppress a late/duplicate ring for a call that's already been handled — this
+    // is what was emitting a phantom decline → spurious /reject that killed calls.
+    if (_handledRooms.contains(roomName)) {
+      debugPrint('[CALL] CallKit: suppressing duplicate/late ring for handled room $roomName');
+      return;
+    }
     // Reuse an existing CallKit id if this room is already ringing (dedupe the
     // WebSocket ring and the push, which can both arrive).
     final callId = _callIdByRoom[roomName] ?? _uuid.v4();
@@ -130,6 +156,7 @@ class CallKitService {
         break;
       case Event.actionCallEnded:
       case Event.actionCallTimeout:
+        _markHandled(pending.roomName);
         _byCallId.remove(callId);
         _callIdByRoom.remove(pending.roomName);
         break;
@@ -160,6 +187,9 @@ class CallKitService {
   }
 
   Future<void> _accept(String callId, _PendingCall pending) async {
+    debugPrint('[CALL] CallKit ACCEPT callId=$callId room=${pending.roomName}');
+    _acceptedRooms.add(pending.roomName); // never let a leftover ring reject this call
+    _markHandled(pending.roomName); // a late duplicate ring for this room is now suppressed
     _byCallId.remove(callId);
     _callIdByRoom.remove(pending.roomName);
 
@@ -203,6 +233,13 @@ class CallKitService {
   Future<void> _decline(String callId, _PendingCall pending) async {
     _byCallId.remove(callId);
     _callIdByRoom.remove(pending.roomName);
+    // If this room was already accepted, this decline is a phantom (a leftover
+    // duplicate ring being dismissed) — do NOT reject, or it kills the live call.
+    if (_acceptedRooms.contains(pending.roomName)) {
+      debugPrint('[CALL] CallKit: skipping reject for already-accepted room ${pending.roomName}');
+      return;
+    }
+    _markHandled(pending.roomName); // suppress any late duplicate ring for this room
     await _calling.rejectCall(pending.roomName);
   }
 }

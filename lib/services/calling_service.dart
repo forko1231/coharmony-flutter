@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -47,19 +48,28 @@ class CallingService {
     // No "already in a call" guard here: a stale room from a previously-broken call
     // would otherwise block every future call. _connectToRoom disposes any prior
     // room before connecting, so this is safe.
-    if (!await _requestPermissions(video: video)) return false;
+    debugPrint('[CALL] initiate → $recipientEmail video=$video');
+    if (!await _requestPermissions(video: video)) {
+      debugPrint('[CALL] initiate ABORT: permissions denied');
+      return false;
+    }
 
     final json = await _api.postJson('/api/calls/initiate', {
       'recipientEmail': recipientEmail,
       'hasVideo': video,
     });
-    if (json is! Map) return false;
+    if (json is! Map) {
+      debugPrint('[CALL] initiate ABORT: bad /initiate response ($json)');
+      return false;
+    }
 
     final roomName = json['roomName'] as String?;
     final token = json['token'] as String?;
     if (roomName == null || roomName.isEmpty || token == null || token.isEmpty) {
+      debugPrint('[CALL] initiate ABORT: missing roomName/token');
       return false;
     }
+    debugPrint('[CALL] initiate room=$roomName tokenLen=${token.length} → connecting');
     return _connectToRoom(livekitUrl, roomName, token, video: video);
   }
 
@@ -73,15 +83,23 @@ class CallingService {
     // foregrounding from the lock screen) request() can spuriously report denied,
     // which previously aborted the answer and rejected the caller. Join regardless;
     // a missing mic just means no audio capture until the user enables it.
+    debugPrint('[CALL] accept room=${event.roomName} from=${event.callerEmail} video=${event.hasVideo}');
     try {
       await _requestPermissions(video: event.hasVideo);
     } catch (_) {/* best-effort */}
 
     final json = await _api.postJson('/api/calls/join', {'roomName': event.roomName});
-    if (json is! Map) return false;
+    if (json is! Map) {
+      debugPrint('[CALL] accept ABORT: bad /join response ($json) — call may be over');
+      return false;
+    }
 
     final token = json['token'] as String?;
-    if (token == null || token.isEmpty) return false;
+    if (token == null || token.isEmpty) {
+      debugPrint('[CALL] accept ABORT: no join token');
+      return false;
+    }
+    debugPrint('[CALL] accept room=${event.roomName} tokenLen=${token.length} → connecting');
     return _connectToRoom(livekitUrl, event.roomName, token, video: event.hasVideo);
   }
 
@@ -95,6 +113,7 @@ class CallingService {
   /// second call is a no-op rather than a duplicate /end.
   Future<void> endCall() async {
     final roomName = _activeRoomName;
+    debugPrint('[CALL] endCall room=$roomName  ${StackTrace.current.toString().split('\n').take(4).join(' | ')}');
     await _disposeRoom();
     if (roomName == null) return;
     try {
@@ -126,6 +145,7 @@ class CallingService {
   }
 
   void _onCallState(CallStateEvent event) {
+    debugPrint('[CALL] WS callState=${event.type} room=${event.roomName} (activeRoom=$_activeRoomName)');
     _callStateChanged.add(event);
   }
 
@@ -142,7 +162,10 @@ class CallingService {
     await _disposeRoom(); // one call at a time — never overwrite a live room
     final room = Room();
     try {
+      debugPrint('[CALL] room.connect url=$livekitUrl room=$roomName …');
       await room.connect(livekitUrl, token);
+      debugPrint('[CALL] room.connect OK room=$roomName sid=${room.localParticipant?.sid} '
+          'identity=${room.localParticipant?.identity} remotes=${room.remoteParticipants.length}');
       await room.localParticipant?.setMicrophoneEnabled(true);
       if (video) {
         await room.localParticipant?.setCameraEnabled(true);
@@ -151,6 +174,7 @@ class CallingService {
       // Surface WHY (bad wss URL / rejected token / network) instead of failing
       // silently — this is the difference between "couldn't start" and a real cause.
       lastConnectError = '$e';
+      debugPrint('[CALL] room.connect FAILED room=$roomName: $e');
       try {
         await room.disconnect();
       } catch (_) {/* ignore */}

@@ -35,6 +35,18 @@ class LoadingSwitcher extends StatelessWidget {
   Widget build(BuildContext context) {
     return AnimatedSwitcher(
       duration: duration,
+      // AnimatedSwitcher's default layout stacks children with Alignment.center and
+      // hands them LOOSE constraints — so a SingleChildScrollView child shrink-wraps
+      // to its content height and gets vertically centered, leaving a gap under the
+      // header when there isn't enough content to scroll. Top-align instead so loaded
+      // content always pins to the top. Fixes the "floating/centered list" everywhere.
+      layoutBuilder: (currentChild, previousChildren) => Stack(
+        alignment: Alignment.topCenter,
+        children: [
+          ...previousChildren,
+          ?currentChild,
+        ],
+      ),
       child: loading
           ? KeyedSubtree(key: const ValueKey('skeleton'), child: skeleton)
           : KeyedSubtree(key: const ValueKey('content'), child: child),

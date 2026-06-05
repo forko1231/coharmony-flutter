@@ -137,11 +137,15 @@ class WebSocketService {
           _messages.add(WebSocketMessage.fromJson(decoded));
           break;
         case 'call_incoming':
+          // ignore: avoid_print
+          print('[CALL] WS<- call_incoming $rawData');
           _callIncoming.add(IncomingCallEvent.fromJson(rawData));
           break;
         case 'call_accepted':
         case 'call_rejected':
         case 'call_ended':
+          // ignore: avoid_print
+          print('[CALL] WS<- $type $rawData');
           _callState.add(CallStateEvent.fromJson(type, rawData));
           break;
         default:
