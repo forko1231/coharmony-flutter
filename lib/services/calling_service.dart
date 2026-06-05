@@ -60,12 +60,20 @@ class CallingService {
     IncomingCallEvent event, {
     required String livekitUrl,
   }) async {
-    if (!await _requestPermissions(video: event.hasVideo)) return false;
+    // Best-effort permission request only. Permissions are primed after onboarding;
+    // do NOT gate the join on a fresh request here. At CallKit-accept time (the app
+    // foregrounding from the lock screen) request() can spuriously report denied,
+    // which previously aborted the answer and rejected the caller. Join regardless;
+    // a missing mic just means no audio capture until the user enables it.
+    try {
+      await _requestPermissions(video: event.hasVideo);
+    } catch (_) {/* best-effort */}
 
     final json = await _api.postJson('/api/calls/join', {'roomName': event.roomName});
     if (json == null) return false;
 
-    final token = json['token'] as String;
+    final token = json['token'] as String?;
+    if (token == null || token.isEmpty) return false;
     await _connectToRoom(livekitUrl, event.roomName, token, video: event.hasVideo);
     return true;
   }

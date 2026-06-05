@@ -31,6 +31,7 @@ class _CallScreenState extends State<CallScreen> {
 
   EventsListener<RoomEvent>? _roomListener;
   StreamSubscription<CallStateEvent>? _stateSub;
+  bool _remoteEverConnected = false; // has the other party ever been in the room?
 
   @override
   void initState() {
@@ -39,15 +40,20 @@ class _CallScreenState extends State<CallScreen> {
 
     // Rebuild whenever participants or their tracks change so the remote/local
     // video tiles appear as soon as tracks are published/subscribed.
+    _remoteEverConnected = widget.room.remoteParticipants.isNotEmpty;
     _roomListener = widget.room.createListener()
-      ..on<ParticipantConnectedEvent>((_) => _refresh())
+      ..on<ParticipantConnectedEvent>((_) {
+        _remoteEverConnected = true;
+        _refresh();
+      })
       ..on<ParticipantDisconnectedEvent>((_) {
         _refresh();
-        // The other party left the room — end the call on this side too, even if
-        // the call_ended WebSocket event never arrives. Without this the local
-        // user is stuck on the call screen / native CallKit UI after a remote
-        // hang-up.
-        if (widget.room.remoteParticipants.isEmpty) _endAndClose();
+        // End the call when the other party leaves — but ONLY once they had
+        // actually joined (never during ringing) and only after a short grace
+        // period, so a transient LiveKit reconnect doesn't drop a live call.
+        if (_remoteEverConnected && widget.room.remoteParticipants.isEmpty) {
+          _scheduleEndIfRemoteGone();
+        }
       })
       ..on<TrackSubscribedEvent>((_) => _refresh())
       ..on<TrackUnsubscribedEvent>((_) => _refresh())
@@ -75,6 +81,15 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _hangUp() => _endAndClose();
+
+  /// The remote left the room. Wait a short grace period and end only if they're
+  /// still gone — a brief LiveKit reconnect shouldn't drop a live call.
+  void _scheduleEndIfRemoteGone() {
+    Future<void>.delayed(const Duration(seconds: 2), () {
+      if (!mounted || _closing) return;
+      if (widget.room.remoteParticipants.isEmpty) _endAndClose();
+    });
+  }
 
   /// Single termination path for every way a call can end (local hang-up, remote
   /// hang-up, room disconnect, server call_ended). Idempotent: tears down the
