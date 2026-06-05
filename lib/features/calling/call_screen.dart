@@ -53,6 +53,7 @@ class _CallScreenState extends State<CallScreen> {
   bool _answered = false; // call_accepted received or remote joined the room
   Timer? _ringTimeout; // caller-side: end the call if nobody answers
   Timer? _rejectGrace; // brief wait before honoring a reject (accept may race it)
+  Timer? _remoteGoneTimer; // remote left the room — close if they don't return
 
   @override
   void initState() {
@@ -109,6 +110,7 @@ class _CallScreenState extends State<CallScreen> {
         _answered = true; // remote is in the room — a later reject is stale
         _ringTimeout?.cancel(); // answered — stop the no-answer timeout
         _rejectGrace?.cancel();
+        _remoteGoneTimer?.cancel(); // remote (re)joined — cancel the leave timer
         _refresh();
       })
       // Just refresh the UI — do NOT auto-end here. A live (esp. video) call can
@@ -119,6 +121,14 @@ class _CallScreenState extends State<CallScreen> {
         debugPrint('[CALL] screen: ParticipantDisconnected ${e.participant.identity} '
             'remotes=${room.remoteParticipants.length}');
         _refresh();
+        // The remote left. Close the call if they don't return within a grace
+        // window — we can't rely solely on the call_ended WebSocket event, which
+        // sometimes never arrives (other side killed / lost network). The grace is
+        // long enough that a brief LiveKit reconnect won't drop a live call, and
+        // ParticipantConnected cancels it. Only after the call was actually answered.
+        if (_answered && room.remoteParticipants.isEmpty) {
+          _scheduleEndIfRemoteGone();
+        }
       })
       ..on<TrackSubscribedEvent>((_) => _refresh())
       ..on<TrackUnsubscribedEvent>((_) => _refresh())
@@ -185,6 +195,20 @@ class _CallScreenState extends State<CallScreen> {
     if (mounted) setState(() {});
   }
 
+  /// The remote left the room. Wait a grace window and close only if they're still
+  /// gone — a brief LiveKit reconnect (ParticipantConnected) cancels this. This is
+  /// the fallback for when the call_ended WebSocket event never arrives.
+  void _scheduleEndIfRemoteGone() {
+    _remoteGoneTimer?.cancel();
+    _remoteGoneTimer = Timer(const Duration(seconds: 6), () {
+      if (!mounted || _closing) return;
+      if (_room?.remoteParticipants.isEmpty ?? true) {
+        debugPrint('[CALL] screen: remote gone for 6s (no call_ended) → endAndClose');
+        _endAndClose();
+      }
+    });
+  }
+
   /// Status line under the avatar.
   String _statusText(bool hasRemote) {
     if (_closing) return 'Call ended';
@@ -198,6 +222,7 @@ class _CallScreenState extends State<CallScreen> {
   void dispose() {
     _ringTimeout?.cancel();
     _rejectGrace?.cancel();
+    _remoteGoneTimer?.cancel();
     _stateSub?.cancel();
     _roomListener?.dispose();
     super.dispose();
