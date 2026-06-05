@@ -509,7 +509,7 @@ class _MessagingPageState extends State<MessagingPage> {
   }
 
   Future<void> _callContact(_Contact c, {required bool video}) =>
-      startOutgoingCall(context, c.email, video: video);
+      startOutgoingCall(context, c.email, contactName: c.name, video: video);
 
   Future<void> _showPendingInfo(_Contact c) async {
     await showDialog<void>(

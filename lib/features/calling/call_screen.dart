@@ -18,6 +18,7 @@ class CallScreen extends StatefulWidget {
     this.connecting,
     this.roomName,
     required this.contactEmail,
+    this.contactName,
     required this.hasVideo,
   }) : assert(room != null || connecting != null, 'need a room or a connecting future');
 
@@ -33,6 +34,7 @@ class CallScreen extends StatefulWidget {
   final String? roomName;
 
   final String contactEmail;
+  final String? contactName; // shown instead of the email when available
   final bool hasVideo;
 
   @override
@@ -289,7 +291,9 @@ class _CallScreenState extends State<CallScreen> {
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      widget.contactEmail,
+                      (widget.contactName?.trim().isNotEmpty ?? false)
+                          ? widget.contactName!.trim()
+                          : widget.contactEmail,
                       style: const TextStyle(color: Colors.white, fontSize: 18),
                     ),
                     const SizedBox(height: 8),

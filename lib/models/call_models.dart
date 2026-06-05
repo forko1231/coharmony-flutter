@@ -51,17 +51,20 @@ class CallSession {
 class IncomingCallEvent {
   final String roomName;
   final String callerEmail;
+  final String? callerName;
   final bool hasVideo;
 
   const IncomingCallEvent({
     required this.roomName,
     required this.callerEmail,
+    this.callerName,
     required this.hasVideo,
   });
 
   factory IncomingCallEvent.fromJson(Map<String, dynamic> json) => IncomingCallEvent(
         roomName: json['roomName'] as String,
         callerEmail: json['callerEmail'] as String,
+        callerName: json['callerName'] as String?,
         hasVideo: json['hasVideo'] as bool? ?? false,
       );
 }

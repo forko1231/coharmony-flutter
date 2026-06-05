@@ -90,7 +90,9 @@ class CallKitService {
     return showIncomingFromData(
       roomName: event.roomName,
       callerEmail: event.callerEmail,
-      callerName: event.callerEmail,
+      callerName: (event.callerName?.trim().isNotEmpty ?? false)
+          ? event.callerName!.trim()
+          : event.callerEmail,
       hasVideo: event.hasVideo,
     );
   }
@@ -237,6 +239,7 @@ class CallKitService {
           roomName: pending.roomName,
           connecting: connecting,
           contactEmail: pending.callerEmail,
+          contactName: pending.callerName,
           hasVideo: pending.hasVideo,
         ),
       ),

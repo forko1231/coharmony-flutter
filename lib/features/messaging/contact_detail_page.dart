@@ -68,7 +68,7 @@ class _ContactDetailPageState extends State<ContactDetailPage> {
   }
 
   Future<void> _call({required bool video}) async {
-    await startOutgoingCall(context, widget.contactEmail, video: video);
+    await startOutgoingCall(context, widget.contactEmail, contactName: widget.contactName, video: video);
     if (mounted) _load(); // refresh history after the call
   }
 

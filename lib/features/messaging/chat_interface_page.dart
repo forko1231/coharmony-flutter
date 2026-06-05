@@ -531,7 +531,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
   }
 
   Future<void> _startCall({required bool video}) =>
-      startOutgoingCall(context, _recipient, video: video);
+      startOutgoingCall(context, _recipient, contactName: widget.contactName, video: video);
 
   Future<void> _alert(String title, String message) async {
     if (!mounted) return;

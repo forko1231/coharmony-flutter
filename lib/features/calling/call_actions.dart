@@ -15,6 +15,7 @@ Future<void> startOutgoingCall(
   BuildContext context,
   String contactEmail, {
   required bool video,
+  String? contactName,
 }) async {
   final messenger = ScaffoldMessenger.maybeOf(context);
   void toast(String message) {
@@ -55,6 +56,7 @@ Future<void> startOutgoingCall(
         builder: (_) => CallScreen(
           connecting: connecting,
           contactEmail: contactEmail,
+          contactName: contactName,
           hasVideo: video,
         ),
       ),
