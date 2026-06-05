@@ -996,6 +996,15 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
+                                // While building during onboarding (not reviewing the
+                                // co-parent's proposal), explain the first-submit-wins flow.
+                                if (_isOnboarding &&
+                                    !(_hasActiveProposal &&
+                                        _activeProposal != null &&
+                                        !_activeProposal!.isCurrentUserProposer)) ...[
+                                  _coSetupNote(context),
+                                  const SizedBox(height: 16),
+                                ],
                                 if (showBanner) ...[
                                   _proposalStatusBanner(context),
                                   const SizedBox(height: 20),
@@ -1160,6 +1169,33 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
         height: 40,
         decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(radius)),
         child: Center(child: child),
+      ),
+    );
+  }
+
+  // Low-key onboarding tip explaining the first-submit-wins flow when both
+  // co-parents may be setting up at once. Soft gray — informs without nagging.
+  Widget _coSetupNote(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      decoration: BoxDecoration(
+        color: context.isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('👋', style: TextStyle(fontSize: 15)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Setting up with your co-parent at the same time? Whoever saves first creates '
+              'the schedule — the other reviews it and can tweak any day. No need to coordinate.',
+              style: TextStyle(fontSize: 12.5, height: 1.35, color: palette.textSecondary),
+            ),
+          ),
+        ],
       ),
     );
   }

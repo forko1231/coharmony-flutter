@@ -275,9 +275,8 @@ class _PartnerInvitePageState extends State<PartnerInvitePage> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Setting up together? Invite each other and you\'ll connect instantly. '
-                  'One of you sets up the first schedule — then you\'ll both review it and '
-                  'can adjust any day.',
+                  'Setting up together? Invite each other and you\'ll connect instantly — '
+                  'no waiting for one of you to accept.',
                   style: TextStyle(fontSize: 12.5, height: 1.35, color: palette.textSecondary),
                 ),
               ),
