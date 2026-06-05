@@ -44,7 +44,9 @@ class CallingService {
     bool video = false,
     required String livekitUrl,
   }) async {
-    if (isInCall) return false; // one call at a time
+    // No "already in a call" guard here: a stale room from a previously-broken call
+    // would otherwise block every future call. _connectToRoom disposes any prior
+    // room before connecting, so this is safe.
     if (!await _requestPermissions(video: video)) return false;
 
     final json = await _api.postJson('/api/calls/initiate', {
