@@ -705,7 +705,7 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
           await _alert('Success', 'Proposal submitted successfully!');
           await _exitAfterSave();
         } else {
-          await _alert('Error', 'Failed to submit proposal');
+          await _handleSubmitFailure();
         }
       } else if (_hasActiveProposal && proposer && status == 'submitted') {
         // Submitted proposal + more changes → create a NEW proposal carrying forward
@@ -747,7 +747,7 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
           await _alert('Success', 'New proposal submitted successfully!');
           await _exitAfterSave();
         } else {
-          await _alert('Error', 'Failed to submit proposal');
+          await _handleSubmitFailure();
         }
       } else {
         // No active proposal — create a new one with the local edits.
@@ -772,7 +772,7 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
           await _alert('Success', 'Proposal submitted successfully!');
           await _exitAfterSave();
         } else {
-          await _alert('Error', 'Failed to submit proposal');
+          await _handleSubmitFailure();
         }
       }
     } catch (e) {
@@ -780,6 +780,27 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// A submit failed. The most likely cause now is "first-submit-wins": the
+  /// co-parent submitted their schedule first (both set up at once), so the server
+  /// declined this competing one. Rather than an error, route into the EXISTING
+  /// review flow — in onboarding that's the same path the router takes when the
+  /// partner has a proposal (scheduleReview); elsewhere we reload into review mode.
+  Future<void> _handleSubmitFailure() async {
+    try {
+      final active = await ServiceLocator.custodyProposal.getActiveProposal();
+      final p = active?.proposal;
+      if (active?.hasActiveProposal == true && p != null && !p.isCurrentUserProposer) {
+        if (PendingTemplateService.isOnboardingMode) {
+          if (mounted) await advanceOnboarding(context); // → scheduleReview
+        } else if (mounted) {
+          await _loadProposalData(); // reload into "Partner's Proposal" review mode
+        }
+        return;
+      }
+    } catch (_) {/* fall through to the generic error */}
+    await _alert('Error', 'Failed to submit proposal');
   }
 
   Future<void> _exitAfterSave() async {
@@ -1093,6 +1114,14 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
   }
 
   (String, String) _headerText() {
+    // Reviewing the co-parent's proposal during onboarding (they set up the schedule
+    // first / you're both setting up together) — frame it as a shared review.
+    if (_isOnboarding &&
+        _hasActiveProposal &&
+        _activeProposal != null &&
+        !_activeProposal!.isCurrentUserProposer) {
+      return ("Your co-parent's schedule", 'They set it up — review together, then continue');
+    }
     if (_isOnboarding) return ('Your Schedule', 'Tap any day to change it · then continue');
     if (_hasActiveProposal && _activeProposal != null) {
       if (_activeProposal!.isCurrentUserProposer) {
