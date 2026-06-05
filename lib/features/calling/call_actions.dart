@@ -22,6 +22,13 @@ Future<void> startOutgoingCall(
   }
 
   try {
+    // 0. Already in (or ringing/connecting) a call — don't start another; the
+    // service holds one room at a time and a second call would tear down the first.
+    if (ServiceLocator.calling.isInCall) {
+      toast("You're already in a call.");
+      return;
+    }
+
     // 1. Microphone is required for any call; camera additionally for video.
     if (!await _ensurePermission(context, Permission.microphone, 'Microphone', toast)) {
       return;
@@ -31,32 +38,22 @@ Future<void> startOutgoingCall(
       return;
     }
 
-    // 2. Mint the room/token on the server and connect to LiveKit.
-    final ok = await ServiceLocator.calling.initiateCall(
+    // 2. Kick off the room/token mint + LiveKit connect, and open the call UI
+    // IMMEDIATELY with the connecting future — the screen shows "Connecting…" and
+    // attaches the room when it's live, so there's no lag staring at the contact.
+    // Connection failures are surfaced (and the screen closed) inside CallScreen.
+    final connecting = ServiceLocator.calling.initiateCall(
       contactEmail,
       video: video,
       livekitUrl: ServiceLocator.livekitUrl,
     );
     if (!context.mounted) return;
-    if (!ok) {
-      final err = ServiceLocator.calling.lastConnectError;
-      toast(err != null
-          ? 'Call failed to connect: $err'
-          : "Couldn't start the call — the calling service may be unavailable. Please try again.");
-      return;
-    }
-
-    final room = ServiceLocator.calling.activeRoom;
-    if (room == null) {
-      toast('Call connection failed. Please try again.');
-      return;
-    }
 
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
         builder: (_) => CallScreen(
-          room: room,
+          connecting: connecting,
           contactEmail: contactEmail,
           hasVideo: video,
         ),

@@ -40,7 +40,7 @@ class CallingService {
   bool get isInCall => _room != null;
 
   /// Requests mic (and camera if video) permissions, creates the call, returns false on failure.
-  Future<bool> initiateCall(
+  Future<Room?> initiateCall(
     String recipientEmail, {
     bool video = false,
     required String livekitUrl,
@@ -51,7 +51,7 @@ class CallingService {
     debugPrint('[CALL] initiate → $recipientEmail video=$video');
     if (!await _requestPermissions(video: video)) {
       debugPrint('[CALL] initiate ABORT: permissions denied');
-      return false;
+      return null;
     }
 
     final json = await _api.postJson('/api/calls/initiate', {
@@ -60,21 +60,21 @@ class CallingService {
     });
     if (json is! Map) {
       debugPrint('[CALL] initiate ABORT: bad /initiate response ($json)');
-      return false;
+      return null;
     }
 
     final roomName = json['roomName'] as String?;
     final token = json['token'] as String?;
     if (roomName == null || roomName.isEmpty || token == null || token.isEmpty) {
       debugPrint('[CALL] initiate ABORT: missing roomName/token');
-      return false;
+      return null;
     }
     debugPrint('[CALL] initiate room=$roomName tokenLen=${token.length} → connecting');
     return _connectToRoom(livekitUrl, roomName, token, video: video);
   }
 
   /// Called when the user taps "Accept" on the incoming call overlay.
-  Future<bool> acceptCall(
+  Future<Room?> acceptCall(
     IncomingCallEvent event, {
     required String livekitUrl,
   }) async {
@@ -91,13 +91,13 @@ class CallingService {
     final json = await _api.postJson('/api/calls/join', {'roomName': event.roomName});
     if (json is! Map) {
       debugPrint('[CALL] accept ABORT: bad /join response ($json) — call may be over');
-      return false;
+      return null;
     }
 
     final token = json['token'] as String?;
     if (token == null || token.isEmpty) {
       debugPrint('[CALL] accept ABORT: no join token');
-      return false;
+      return null;
     }
     debugPrint('[CALL] accept room=${event.roomName} tokenLen=${token.length} → connecting');
     return _connectToRoom(livekitUrl, event.roomName, token, video: event.hasVideo);
@@ -153,7 +153,7 @@ class CallingService {
   /// tears down the partial room and returns false — it never throws to callers,
   /// so initiate/accept can report failure deterministically (and clean up the
   /// native call UI) instead of leaking an exception.
-  Future<bool> _connectToRoom(
+  Future<Room?> _connectToRoom(
     String livekitUrl,
     String roomName,
     String token, {
@@ -179,12 +179,12 @@ class CallingService {
         await room.disconnect();
       } catch (_) {/* ignore */}
       room.dispose();
-      return false;
+      return null;
     }
     lastConnectError = null;
     _room = room;
     _activeRoomName = roomName;
-    return true;
+    return room;
   }
 
   /// Disconnects + disposes the active room and clears state. The name/room are

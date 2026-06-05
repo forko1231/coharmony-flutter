@@ -40,11 +40,15 @@ class ChatInterfacePage extends StatefulWidget {
   final String contactEmail; // may be the "partner" sentinel
   final String contactName;
   final String? draftMessage;
+  /// Whether to offer calling for this contact. False for lawyers (calling is a
+  /// family feature). Defaults true since most chats are co-parent/child.
+  final bool callable;
   const ChatInterfacePage({
     super.key,
     required this.contactEmail,
     required this.contactName,
     this.draftMessage,
+    this.callable = true,
   });
 
   @override
@@ -705,7 +709,7 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
       ],
     );
 
-    if (!callingEnabled) return heading;
+    if (!callingEnabled || !widget.callable) return heading;
 
     return PopupMenuButton<bool>(
       tooltip: 'Call ${widget.contactName}',

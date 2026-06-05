@@ -101,6 +101,15 @@ class CallKitService {
       debugPrint('[CALL] CallKit: suppressing duplicate/late ring for handled room $roomName');
       return;
     }
+    // Busy: already in (or ringing/connecting) a call → auto-decline the new one.
+    // Otherwise it would stack a second ring, and accepting it would tear down the
+    // live call (a single CallingService holds one room at a time).
+    if (_calling.isInCall) {
+      debugPrint('[CALL] CallKit: busy — auto-declining incoming room $roomName');
+      _markHandled(roomName);
+      await _calling.rejectCall(roomName);
+      return;
+    }
     // Reuse an existing CallKit id if this room is already ringing (dedupe the
     // WebSocket ring and the push, which can both arrive).
     final callId = _callIdByRoom[roomName] ?? _uuid.v4();
@@ -193,11 +202,14 @@ class CallKitService {
     _byCallId.remove(callId);
     _callIdByRoom.remove(pending.roomName);
 
-    // Just join. Permissions are primed after onboarding; we deliberately do NOT
-    // re-check/abort here, because an accept-time permission hiccup (common when
-    // foregrounding from the lock screen) must never reject and cancel the
-    // caller's call. A missing mic degrades to no audio, not a dropped call.
-    final ok = await _calling.acceptCall(
+    final navigator = AppNavigation.navigatorKey.currentState;
+    if (navigator == null) return;
+
+    // Start the join. Permissions are primed after onboarding; we deliberately do
+    // NOT re-check/abort here, because an accept-time permission hiccup (common when
+    // foregrounding from the lock screen) must never reject and cancel the caller's
+    // call. A missing mic degrades to no audio, not a dropped call.
+    final connecting = _calling.acceptCall(
       IncomingCallEvent(
         roomName: pending.roomName,
         callerEmail: pending.callerEmail,
@@ -205,24 +217,16 @@ class CallKitService {
       ),
       livekitUrl: AppNavigation.livekitUrl,
     );
-    if (!ok) {
-      // Couldn't join (server/LiveKit). Clear only the local native call UI — do
-      // NOT reject, so a flaky answer never cancels the caller's call.
-      try {
-        await FlutterCallkitIncoming.endCall(callId);
-      } catch (_) {/* best-effort */}
-      return;
-    }
 
-    final room = _calling.activeRoom;
-    final navigator = AppNavigation.navigatorKey.currentState;
-    if (room == null || navigator == null) return;
-
+    // Open the call UI IMMEDIATELY (shows "Connecting…") and let it attach the room
+    // when the join completes — the recipient shouldn't stare at the incoming
+    // screen during the ~1s join. A failed join closes the screen from inside.
     await navigator.push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
         builder: (_) => CallScreen(
-          room: room,
+          roomName: pending.roomName,
+          connecting: connecting,
           contactEmail: pending.callerEmail,
           hasVideo: pending.hasVideo,
         ),

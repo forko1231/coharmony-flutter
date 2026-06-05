@@ -124,6 +124,7 @@ class _MessagingPageState extends State<MessagingPage> {
           time: data != null ? _relativeTime(data.time) : '',
           avatarColor: AppColors.primaryBlue,
           hasUnread: data?.unread ?? false,
+          callable: true,
         ));
       } else if (partner.valid && partner.status == 'pending_sent') {
         // Invite sent but not connected yet — show the co-parent as a pending row
@@ -147,21 +148,25 @@ class _MessagingPageState extends State<MessagingPage> {
         }
       }
       byContact.forEach((email, d) {
+        final isChild = childEmails.contains(email);
+        final isLawyer = lawyerEmails.contains(email);
         final contact = _Contact(
           email: email,
           name: d.name,
           lastMessage: d.last,
           time: _relativeTime(d.time),
-          avatarColor: childEmails.contains(email)
+          avatarColor: isChild
               ? AppColors.successGreen
-              : lawyerEmails.contains(email)
+              : isLawyer
                   ? AppColors.accentPurple
                   : const Color(0xFF64748B),
           hasUnread: d.unread,
+          // Children are callable; lawyers and unknown "other" contacts are not.
+          callable: isChild,
         );
-        if (childEmails.contains(email)) {
+        if (isChild) {
           childContacts.add(contact);
-        } else if (lawyerEmails.contains(email)) {
+        } else if (isLawyer) {
           legalContacts.add(contact);
         } else {
           otherContacts.add(contact);
@@ -431,8 +436,9 @@ class _MessagingPageState extends State<MessagingPage> {
               ),
             ),
             // Quick call/video buttons (optional — gated by the calling setting;
-            // hidden for a pending co-parent who isn't reachable yet).
-            if (callingEnabled && !c.pending) ...[
+            // hidden for a pending co-parent who isn't reachable yet, and for
+            // non-callable contacts like lawyers).
+            if (callingEnabled && !c.pending && c.callable) ...[
               _cardCallButton(
                 icon: Icons.call,
                 color: AppColors.accentTeal,
@@ -482,7 +488,7 @@ class _MessagingPageState extends State<MessagingPage> {
   Future<void> _openChat(_Contact c) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ChatInterfacePage(contactEmail: c.email, contactName: c.name),
+        builder: (_) => ChatInterfacePage(contactEmail: c.email, contactName: c.name, callable: c.callable),
       ),
     );
     if (mounted) _load(silent: true); // refresh unread state on return
@@ -495,6 +501,7 @@ class _MessagingPageState extends State<MessagingPage> {
           contactEmail: c.email,
           contactName: c.name,
           avatarColor: c.avatarColor,
+          callable: c.callable,
         ),
       ),
     );
@@ -599,6 +606,12 @@ class _Contact {
   /// A co-parent who was invited but hasn't connected yet — shown as a status
   /// row (no chat / no call until they accept).
   final bool pending;
+
+  /// Whether voice/video calling is offered for this contact. Co-parents and
+  /// children are callable; lawyers (and other/unknown contacts) are NOT — calling
+  /// is a family feature, not a legal-communication channel.
+  final bool callable;
+
   const _Contact({
     required this.email,
     required this.name,
@@ -607,5 +620,6 @@ class _Contact {
     required this.avatarColor,
     required this.hasUnread,
     this.pending = false,
+    this.callable = false,
   });
 }

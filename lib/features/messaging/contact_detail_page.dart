@@ -17,11 +17,14 @@ class ContactDetailPage extends StatefulWidget {
     required this.contactEmail,
     required this.contactName,
     this.avatarColor = AppColors.primaryBlue,
+    this.callable = true,
   });
 
   final String contactEmail;
   final String contactName;
   final Color avatarColor;
+  /// Whether to offer calling. False for lawyers. Defaults true (co-parent/child).
+  final bool callable;
 
   @override
   State<ContactDetailPage> createState() => _ContactDetailPageState();
@@ -58,6 +61,7 @@ class _ContactDetailPageState extends State<ContactDetailPage> {
         builder: (_) => ChatInterfacePage(
           contactEmail: widget.contactEmail,
           contactName: widget.contactName,
+          callable: widget.callable,
         ),
       ),
     );
@@ -116,7 +120,7 @@ class _ContactDetailPageState extends State<ContactDetailPage> {
                 color: AppColors.primaryBlue,
                 onTap: _openChat,
               ),
-              if (callingEnabled) ...[
+              if (callingEnabled && widget.callable) ...[
                 const SizedBox(width: 20),
                 _ActionButton(
                   icon: Icons.call,
