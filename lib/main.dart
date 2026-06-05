@@ -74,6 +74,17 @@ class CoHarmonyApp extends StatelessWidget {
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: mode,
+        // App-wide guard: cap how far the OS text-size / accessibility setting can
+        // enlarge text. A large system font (common on parents'/grandparents'
+        // phones) otherwise wraps and breaks fixed-height buttons and labels —
+        // worst on small screens. 1.2x still honours some enlargement.
+        builder: (context, child) {
+          final mq = MediaQuery.of(context);
+          return MediaQuery(
+            data: mq.copyWith(textScaler: mq.textScaler.clamp(maxScaleFactor: 1.2)),
+            child: child ?? const SizedBox.shrink(),
+          );
+        },
         home: const BootstrapPage(),
       ),
     );
