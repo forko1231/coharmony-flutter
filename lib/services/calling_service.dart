@@ -22,6 +22,9 @@ class CallingService {
   Room? _room;
   String? _activeRoomName;
 
+  /// The last LiveKit connection error (for surfacing why a call wouldn't connect).
+  String? lastConnectError;
+
   final StreamController<CallStateEvent> _callStateChanged =
       StreamController<CallStateEvent>.broadcast();
 
@@ -142,13 +145,17 @@ class CallingService {
       if (video) {
         await room.localParticipant?.setCameraEnabled(true);
       }
-    } catch (_) {
+    } catch (e) {
+      // Surface WHY (bad wss URL / rejected token / network) instead of failing
+      // silently — this is the difference between "couldn't start" and a real cause.
+      lastConnectError = '$e';
       try {
         await room.disconnect();
       } catch (_) {/* ignore */}
       room.dispose();
       return false;
     }
+    lastConnectError = null;
     _room = room;
     _activeRoomName = roomName;
     return true;

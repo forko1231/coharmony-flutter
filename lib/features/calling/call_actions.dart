@@ -39,7 +39,10 @@ Future<void> startOutgoingCall(
     );
     if (!context.mounted) return;
     if (!ok) {
-      toast("Couldn't start the call — the calling service may be unavailable. Please try again.");
+      final err = ServiceLocator.calling.lastConnectError;
+      toast(err != null
+          ? 'Call failed to connect: $err'
+          : "Couldn't start the call — the calling service may be unavailable. Please try again.");
       return;
     }
 
