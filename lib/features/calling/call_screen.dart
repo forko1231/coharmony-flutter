@@ -32,6 +32,7 @@ class _CallScreenState extends State<CallScreen> {
   EventsListener<RoomEvent>? _roomListener;
   StreamSubscription<CallStateEvent>? _stateSub;
   bool _remoteEverConnected = false; // has the other party ever been in the room?
+  Timer? _ringTimeout; // caller-side: end the call if nobody answers
 
   @override
   void initState() {
@@ -44,6 +45,7 @@ class _CallScreenState extends State<CallScreen> {
     _roomListener = widget.room.createListener()
       ..on<ParticipantConnectedEvent>((_) {
         _remoteEverConnected = true;
+        _ringTimeout?.cancel(); // answered — stop the no-answer timeout
         _refresh();
       })
       ..on<ParticipantDisconnectedEvent>((_) {
@@ -67,6 +69,15 @@ class _CallScreenState extends State<CallScreen> {
         _endAndClose();
       }
     });
+
+    // Caller-side no-answer timeout: if nobody has joined within 45s, end the
+    // call so the caller isn't stuck ringing forever. (A recipient opens this
+    // screen with the caller already present, so this never fires for them.)
+    if (!_remoteEverConnected) {
+      _ringTimeout = Timer(const Duration(seconds: 45), () {
+        if (mounted && !_remoteEverConnected) _endAndClose();
+      });
+    }
   }
 
   void _refresh() {
@@ -75,6 +86,7 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   void dispose() {
+    _ringTimeout?.cancel();
     _stateSub?.cancel();
     _roomListener?.dispose();
     super.dispose();

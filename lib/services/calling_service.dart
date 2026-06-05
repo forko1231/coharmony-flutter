@@ -41,18 +41,21 @@ class CallingService {
     bool video = false,
     required String livekitUrl,
   }) async {
+    if (isInCall) return false; // one call at a time
     if (!await _requestPermissions(video: video)) return false;
 
     final json = await _api.postJson('/api/calls/initiate', {
       'recipientEmail': recipientEmail,
       'hasVideo': video,
     });
-    if (json == null) return false;
+    if (json is! Map) return false;
 
-    final roomName = json['roomName'] as String;
-    final token = json['token'] as String;
-    await _connectToRoom(livekitUrl, roomName, token, video: video);
-    return true;
+    final roomName = json['roomName'] as String?;
+    final token = json['token'] as String?;
+    if (roomName == null || roomName.isEmpty || token == null || token.isEmpty) {
+      return false;
+    }
+    return _connectToRoom(livekitUrl, roomName, token, video: video);
   }
 
   /// Called when the user taps "Accept" on the incoming call overlay.
@@ -70,12 +73,11 @@ class CallingService {
     } catch (_) {/* best-effort */}
 
     final json = await _api.postJson('/api/calls/join', {'roomName': event.roomName});
-    if (json == null) return false;
+    if (json is! Map) return false;
 
     final token = json['token'] as String?;
     if (token == null || token.isEmpty) return false;
-    await _connectToRoom(livekitUrl, event.roomName, token, video: event.hasVideo);
-    return true;
+    return _connectToRoom(livekitUrl, event.roomName, token, video: event.hasVideo);
   }
 
   /// Rejects an incoming call without answering.
@@ -83,17 +85,16 @@ class CallingService {
     await _api.postJson('/api/calls/reject', {'roomName': roomName});
   }
 
-  /// Ends the active call (hang up).
+  /// Ends the active call (hang up). Idempotent: safe to call from multiple
+  /// termination paths — the room name is captured and cleared atomically so a
+  /// second call is a no-op rather than a duplicate /end.
   Future<void> endCall() async {
     final roomName = _activeRoomName;
+    await _disposeRoom();
     if (roomName == null) return;
-
-    await _room?.disconnect();
-    _room?.dispose();
-    _room = null;
-    _activeRoomName = null;
-
-    await _api.postJson('/api/calls/end', {'roomName': roomName});
+    try {
+      await _api.postJson('/api/calls/end', {'roomName': roomName});
+    } catch (_) {/* best-effort: local teardown already done */}
   }
 
   Future<List<CallSession>> getCallHistory(String contactEmail) async {
@@ -123,20 +124,47 @@ class CallingService {
     _callStateChanged.add(event);
   }
 
-  Future<void> _connectToRoom(
+  /// Connects to the LiveKit room. Returns true on success; on any failure it
+  /// tears down the partial room and returns false — it never throws to callers,
+  /// so initiate/accept can report failure deterministically (and clean up the
+  /// native call UI) instead of leaking an exception.
+  Future<bool> _connectToRoom(
     String livekitUrl,
     String roomName,
     String token, {
     required bool video,
   }) async {
-    _room = Room();
-    await _room!.connect(livekitUrl, token);
-    _activeRoomName = roomName;
-
-    await _room!.localParticipant?.setMicrophoneEnabled(true);
-    if (video) {
-      await _room!.localParticipant?.setCameraEnabled(true);
+    await _disposeRoom(); // one call at a time — never overwrite a live room
+    final room = Room();
+    try {
+      await room.connect(livekitUrl, token);
+      await room.localParticipant?.setMicrophoneEnabled(true);
+      if (video) {
+        await room.localParticipant?.setCameraEnabled(true);
+      }
+    } catch (_) {
+      try {
+        await room.disconnect();
+      } catch (_) {/* ignore */}
+      room.dispose();
+      return false;
     }
+    _room = room;
+    _activeRoomName = roomName;
+    return true;
+  }
+
+  /// Disconnects + disposes the active room and clears state. The name/room are
+  /// cleared before the async disconnect so concurrent callers see "no call".
+  Future<void> _disposeRoom() async {
+    final room = _room;
+    _room = null;
+    _activeRoomName = null;
+    if (room == null) return;
+    try {
+      await room.disconnect();
+    } catch (_) {/* ignore */}
+    room.dispose();
   }
 
   Future<bool> _requestPermissions({required bool video}) async {
