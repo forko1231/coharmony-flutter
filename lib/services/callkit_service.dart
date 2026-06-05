@@ -4,10 +4,12 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
 import '../features/calling/call_screen.dart';
 import '../models/call_models.dart';
+import '../widgets/app_notification_banner.dart';
 import 'app_navigation.dart';
 import 'calling_service.dart';
 import 'notification_service.dart';
@@ -163,6 +165,17 @@ class CallKitService {
     _byCallId.remove(callId);
     _callIdByRoom.remove(pending.roomName);
 
+    // Mic (and camera for video) are required to join. Check up front: if the
+    // recipient hasn't granted them, an accepted CallKit call would otherwise
+    // become a ghost — we never join, the caller keeps ringing, and the native
+    // call UI lingers as "connected". Abort cleanly instead.
+    final micOk = await _ensureCallPermission(Permission.microphone, 'Microphone');
+    final camOk = !pending.hasVideo || await _ensureCallPermission(Permission.camera, 'Camera');
+    if (!micOk || !camOk) {
+      await _abortAccept(callId, pending);
+      return;
+    }
+
     final ok = await _calling.acceptCall(
       IncomingCallEvent(
         roomName: pending.roomName,
@@ -171,7 +184,11 @@ class CallKitService {
       ),
       livekitUrl: AppNavigation.livekitUrl,
     );
-    if (!ok) return;
+    if (!ok) {
+      // Couldn't join (server/LiveKit) — don't leave a ghost call either.
+      await _abortAccept(callId, pending);
+      return;
+    }
 
     final room = _calling.activeRoom;
     final navigator = AppNavigation.navigatorKey.currentState;
@@ -187,6 +204,31 @@ class CallKitService {
         ),
       ),
     );
+  }
+
+  /// Requests a call permission, surfacing an in-app banner (which works even
+  /// when accepting from the lock screen, with no Scaffold) on denial.
+  Future<bool> _ensureCallPermission(Permission permission, String label) async {
+    final status = await permission.request();
+    if (status.isGranted || status.isLimited) return true;
+    AppNotificationBanner.show(
+      title: '$label access needed',
+      body: 'Turn on $label for CoHarmony in Settings to answer calls.',
+      type: NotificationType.incomingCall,
+      onTapped: openAppSettings,
+    );
+    return false;
+  }
+
+  /// Tears down a call that couldn't be answered: clears the native CallKit UI
+  /// for this id and rejects so the caller stops ringing.
+  Future<void> _abortAccept(String callId, _PendingCall pending) async {
+    try {
+      await FlutterCallkitIncoming.endCall(callId);
+    } catch (_) {/* best-effort */}
+    try {
+      await _calling.rejectCall(pending.roomName);
+    } catch (_) {/* best-effort */}
   }
 
   Future<void> _decline(String callId, _PendingCall pending) async {
