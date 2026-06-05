@@ -95,40 +95,41 @@ String _other(String parent) => switch (parent) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Pattern construction from a "nights" array.
 //
-// CANONICAL MEANING (matches the manual builder + every renderer):
-//   parentAssignment = the parent the child WAKES UP with (has at 00:00 / midnight).
-//   transferTime     = the moment the OTHER parent takes over that day.
+// CANONICAL MEANING (matches the MANUAL builder, the renderer, and how real-world
+// custody is counted — by overnights):
+//   parentAssignment[day] = the parent who has the child that day / that overnight.
+//   transferTime          = the handoff time on a changeover day (when that parent
+//                           took over from the day before).
 //
-// We declare WHO THE CHILD SLEEPS WITH each night, then derive every day:
-//   • parentAssignment[day] = whoever had the PREVIOUS night (who they wake with)
-//   • a transfer is added    = only when tonight's parent differs from last night's
+// The array declares who the child is with each day; a transfer is marked only when
+// that changes from the previous day. (Previously the day was coloured by the
+// PREVIOUS night, which shifted every template one day off from its own question and
+// from the manual editor — e.g. "Mom has Mon-Tue" painted Tue-Wed.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class PatternHelpers {
   PatternHelpers._();
 
-  /// [nights][i] = the parent the child sleeps with on day i (length = weeks×7).
+  /// [nights][i] = the parent who has the child on day i (length = weeks×7).
   /// Index 0 = Week 0 Sunday, 1 = Mon, ... 6 = Sat, 7 = Week 1 Sunday, etc.
   ///
-  /// [timeForTransferDay] returns the handoff time ("HH:mm") given a changeover-day
+  /// [timeForTransferDay] returns the handoff time ("HH:mm") for a changeover-day
   /// index; only consulted on transfer days.
   static List<GeneratedDay> fromNights(
       List<String> nights, String Function(int) timeForTransferDay) {
     final n = nights.length;
     final days = <GeneratedDay>[];
     for (int d = 0; d < n; d++) {
-      // Who the child woke up with = who had the previous night (wraps the cycle).
-      final midnight = nights[(d - 1 + n) % n];
-      final tonight = nights[d];
+      final dayParent = nights[d]; // who has this day / overnight
+      final prevDay = nights[(d - 1 + n) % n]; // the day before (wraps the cycle)
 
-      // A real handoff happens only when the RESOLVED parent changes.
-      final isTransfer =
-          midnight != tonight && midnight != 'None' && tonight != 'None';
+      // A real handoff happens only when the parent changes from the day before.
+      final isTransfer = prevDay != dayParent && prevDay != 'None' && dayParent != 'None';
 
       days.add(GeneratedDay(
         weekIndex: d ~/ 7,
         dayIndex: d % 7,
-        parentAssignment: midnight,
+        parentAssignment: dayParent,
         transferTime: isTransfer ? timeForTransferDay(d) : null,
       ));
     }
