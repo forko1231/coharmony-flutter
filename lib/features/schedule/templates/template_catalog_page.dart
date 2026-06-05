@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../models/custody_models.dart';
 import '../../../services/custody_templates/custody_template.dart';
+import '../../../services/custody_templates/pending_template_service.dart';
 import '../../../services/custody_templates/template_registry.dart';
 import '../../../theme/app_colors.dart';
 import '../../../theme/app_palette.dart';
@@ -110,10 +111,18 @@ class _TemplateCard extends StatelessWidget {
     final palette = context.palette;
     final preview = _previewDays();
     return GestureDetector(
-      onTap: () {
-        Navigator.of(context).push(
+      onTap: () async {
+        await Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => TemplateConfigPage(template: template)),
         );
+        // Non-onboarding (opened from the editor): the config page stashed a
+        // result and popped itself — pop the catalog too so we return to the
+        // editor, which applies the chosen template.
+        if (context.mounted &&
+            !PendingTemplateService.isOnboardingMode &&
+            PendingTemplateService.hasResult) {
+          Navigator.of(context).maybePop();
+        }
       },
       child: Container(
         padding: const EdgeInsets.all(16),

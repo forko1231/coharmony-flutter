@@ -13,6 +13,7 @@ import '../../theme/app_palette.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/skeleton.dart';
 import '../ai/ai_chat_page.dart';
+import 'templates/template_catalog_page.dart';
 import 'custody_parent.dart';
 import 'day_editor_view.dart';
 import 'editor_models.dart';
@@ -928,6 +929,15 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
     await _handlePendingHandoff();
   }
 
+  /// Opens the template catalog from the editor (outside onboarding) and applies
+  /// the chosen template to the current schedule on return.
+  Future<void> _openTemplates() async {
+    PendingTemplateService.isOnboardingMode = false;
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TemplateCatalogPage()));
+    if (!mounted) return;
+    await _handlePendingHandoff();
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Build
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1003,21 +1013,10 @@ class _CustodySchedulePageState extends State<CustodySchedulePage> {
             Positioned(
               right: 20,
               bottom: 24,
-              child: GestureDetector(
-                onTap: _openAi,
-                child: Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                        begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6)]),
-                    borderRadius: BorderRadius.circular(28),
-                    boxShadow: [
-                      BoxShadow(color: const Color(0xFF8B5CF6).withValues(alpha: 0.4), offset: const Offset(0, 4), blurRadius: 12),
-                    ],
-                  ),
-                  child: const Center(child: AppIcon('icon_sparkle', size: 26, color: Colors.white)),
-                ),
+              child: _EditorActionMenu(
+                onAi: _openAi,
+                onTemplates: _openTemplates,
+                onHelp: _showOnboarding,
               ),
             ),
           if (_dockedEditor != null)
@@ -1867,24 +1866,30 @@ class _OnboardingDialogState extends State<_OnboardingDialog> {
   int _step = 0;
 
   static const _steps = <_OnbStep>[
-    _OnbStep('?', AppColors.iconBgBlue, AppColors.primaryBlue, 'Welcome to the Schedule Editor',
-        "Let's walk through how this works. It only takes a moment.",
-        note: 'Tap the ? button anytime to replay this guide'),
-    _OnbStep('icon_refresh', AppColors.iconBgBlue, AppColors.primaryBlue, 'Choose Your Cycle',
-        'Your custody schedule repeats on a cycle. Pick how many weeks make up one full cycle.',
-        note: 'Then repeats: Dad → Mom → Dad → Mom ...'),
-    _OnbStep('icon_calendar', Color(0xFFFCE7F3), Color(0xFFBE185D), 'Tap a Day to Edit',
-        'Tap any day and a small editor slides up at the bottom. Pick who has the kids (Dad, Mom, Both, or None) and the day updates instantly.'),
-    _OnbStep('icon_clock', AppColors.iconBgGreen, AppColors.successGreen, 'Handoff Times',
-        'Set when custody starts and ends for each day. This lets you define exact custody windows.'),
-    _OnbStep('icon_gift', AppColors.iconBgRed, AppColors.dangerRed, 'Override Special Days',
-        'Holidays and special dates can override the normal pattern — e.g. Christmas → Always Mom, July 4th → Always Dad.'),
-    _OnbStep('icon_handshake', AppColors.iconBgGreen, AppColors.successGreen, 'Both Parents Must Agree',
-        'When you save, it creates a proposal. Nothing changes until your partner accepts.'),
-    _OnbStep('icon_alert', AppColors.iconBgYellow, AppColors.warningAmber, 'Counter-Proposals & Conflicts',
-        'If you disagree, modify specific days to send a counter-proposal (yellow), or long-press a day to flag a conflict (red).'),
-    _OnbStep('icon_sparkle', AppColors.iconBgPurple, AppColors.accentPurple, 'Meet Your AI Assistant',
-        'Need help? The AI assistant can set up schedules for you, answer questions, and guide you through the app.'),
+    _OnbStep('?', AppColors.iconBgBlue, AppColors.primaryBlue, 'Your custody calendar',
+        "This is where you build your kids' schedule. We'll show you how — with examples — in a few quick taps.",
+        visual: _Vis.welcome, note: 'Tap the ? button anytime to replay this guide.'),
+    _OnbStep('icon_refresh', AppColors.iconBgBlue, AppColors.primaryBlue, 'What is a "cycle"?',
+        'A cycle is just a pattern that repeats — like the days of the week always go Mon, Tue… then start over. You set up one or two weeks, and they repeat forever.',
+        visual: _Vis.cycle, note: 'Most families use a 1- or 2-week cycle.'),
+    _OnbStep('icon_calendar', Color(0xFFFCE7F3), Color(0xFFBE185D), 'Tap a day to set it',
+        'Tap any day, then choose who has the kids: Dad, Mom, Both, or None. The day changes colour right away.',
+        visual: _Vis.tapDay),
+    _OnbStep('icon_clock', AppColors.iconBgGreen, AppColors.successGreen, 'Set handoff times',
+        'For each day you can set when custody starts and ends — so pickup and drop-off times are crystal clear.',
+        visual: _Vis.times),
+    _OnbStep('icon_gift', AppColors.iconBgRed, AppColors.dangerRed, 'Holidays & special days',
+        'Special dates can override the normal pattern. For example: Christmas → always Mom, July 4th → always Dad.',
+        visual: _Vis.special),
+    _OnbStep('icon_handshake', AppColors.iconBgGreen, AppColors.successGreen, 'Both parents must agree',
+        'When you save, it becomes a proposal. Nothing changes until your co-parent accepts it.',
+        visual: _Vis.propose),
+    _OnbStep('icon_alert', AppColors.iconBgYellow, AppColors.warningAmber, 'Changes & conflicts',
+        'Disagree with a day? Tap it to change it (turns yellow) and send a counter-proposal, or long-press to flag a conflict (turns red).',
+        visual: _Vis.conflict),
+    _OnbStep('icon_sparkle', AppColors.iconBgPurple, AppColors.accentPurple, 'Need a hand? Use the menu',
+        'Tap the menu button (bottom-right) for the AI assistant — it can build a whole schedule for you — and ready-made Templates you can apply in one tap.',
+        visual: _Vis.menu),
   ];
 
   @override
@@ -1921,16 +1926,7 @@ class _OnboardingDialogState extends State<_OnboardingDialog> {
               child: SingleChildScrollView(
                 child: Column(
                   children: [
-                    Container(
-                      width: 64,
-                      height: 64,
-                      decoration: BoxDecoration(color: s.iconBg, borderRadius: BorderRadius.circular(16)),
-                      child: Center(
-                        child: s.icon.startsWith('icon_')
-                            ? AppIcon(s.icon, size: 32, color: s.iconTint)
-                            : Text(s.icon, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: s.iconTint)),
-                      ),
-                    ),
+                    _hero(context, s),
                     const SizedBox(height: 16),
                     Text(s.title,
                         textAlign: TextAlign.center,
@@ -1998,7 +1994,285 @@ class _OnboardingDialogState extends State<_OnboardingDialog> {
       ),
     );
   }
+
+  // ── Step illustrations ───────────────────────────────────────────────────────
+  static const _cDad = Color(0xFFBFDBFE);
+  static const _cMom = Color(0xFFFCE7F3);
+  static const _cBoth = Color(0xFFE9D5FF);
+  static const _cNone = Color(0xFFF1F5F9);
+  static const _cDadInk = Color(0xFF1E40AF);
+  static const _cMomInk = Color(0xFFBE185D);
+  static const _muted = Color(0xFF94A3B8);
+
+  Widget _hero(BuildContext context, _OnbStep s) {
+    final v = _visual(context, s.visual);
+    if (v != null) return v;
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(color: s.iconBg, borderRadius: BorderRadius.circular(16)),
+      child: Center(
+        child: s.icon.startsWith('icon_')
+            ? AppIcon(s.icon, size: 32, color: s.iconTint)
+            : Text(s.icon, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: s.iconTint)),
+      ),
+    );
+  }
+
+  Widget? _visual(BuildContext context, _Vis v) {
+    switch (v) {
+      case _Vis.none:
+        return null;
+      case _Vis.welcome:
+        return _card(context, Column(children: [_legend(), const SizedBox(height: 12), _week('DDMMMBB')]));
+      case _Vis.cycle:
+        return _card(
+          context,
+          Column(children: [
+            _legend(),
+            const SizedBox(height: 12),
+            _week('DDMMMDD', label: 'WEEK 1'),
+            const SizedBox(height: 8),
+            _week('MMDDDMM', label: 'WEEK 2'),
+            const SizedBox(height: 10),
+            const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.refresh, size: 15, color: Color(0xFF2563EB)),
+              SizedBox(width: 6),
+              Text('then it repeats…', style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Color(0xFF2563EB))),
+            ]),
+            const SizedBox(height: 10),
+            Opacity(opacity: 0.45, child: _week('DDMMMDD', label: 'WEEK 1 AGAIN')),
+          ]),
+        );
+      case _Vis.tapDay:
+        return _card(
+          context,
+          Column(children: [
+            _week('DDNMMBB', ring: 2),
+            const SizedBox(height: 12),
+            Wrap(spacing: 8, runSpacing: 8, alignment: WrapAlignment.center, children: [
+              _choice('Dad', _cDad, _cDadInk),
+              _choice('Mom', _cMom, _cMomInk),
+              _choice('Both', _cBoth, const Color(0xFF7E22CE)),
+              _choice('None', _cNone, _muted),
+            ]),
+          ]),
+        );
+      case _Vis.times:
+        return _card(
+          context,
+          Column(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(color: _cDad, borderRadius: BorderRadius.circular(12)),
+              child: const Text('WED · Dad has the kids',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _cDadInk)),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(color: const Color(0xFFDCFCE7), borderRadius: BorderRadius.circular(20)),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.access_time, size: 14, color: Color(0xFF16A34A)),
+                SizedBox(width: 6),
+                Text('3:00 PM  →  6:00 PM',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF16A34A))),
+              ]),
+            ),
+          ]),
+        );
+      case _Vis.special:
+        return _card(
+          context,
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            const Column(children: [
+              Text('🎄', style: TextStyle(fontSize: 28)),
+              SizedBox(height: 2),
+              Text('Dec 25', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF64748B))),
+            ]),
+            const Padding(padding: EdgeInsets.symmetric(horizontal: 14), child: Icon(Icons.arrow_forward, size: 18, color: _muted)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(color: _cMom, borderRadius: BorderRadius.circular(12)),
+              child: const Text('Always Mom', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: _cMomInk)),
+            ),
+          ]),
+        );
+      case _Vis.propose:
+        return _card(
+          context,
+          Column(children: [
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              _avatar('You', const Color(0xFF3B82F6)),
+              const Padding(padding: EdgeInsets.symmetric(horizontal: 14), child: Icon(Icons.send, size: 18, color: _muted)),
+              _avatar('Co-parent', const Color(0xFFEC4899)),
+            ]),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(20)),
+              child: const Text('Waiting for them to accept',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF92400E))),
+            ),
+          ]),
+        );
+      case _Vis.conflict:
+        return _card(
+          context,
+          Column(children: [
+            _week('DDMMMDD', changed: {1}, conflict: {4}),
+            const SizedBox(height: 12),
+            Wrap(spacing: 14, alignment: WrapAlignment.center, children: [
+              _dot(const Color(0xFFF59E0B), 'Your change'),
+              _dot(const Color(0xFFEF4444), 'Conflict'),
+            ]),
+          ]),
+        );
+      case _Vis.menu:
+        return _card(
+          context,
+          Column(mainAxisSize: MainAxisSize.min, children: [
+            _menuRow('icon_calendar', 'Templates', const [Color(0xFF10B981), Color(0xFF059669)]),
+            const SizedBox(height: 8),
+            _menuRow('icon_sparkle', 'AI Assistant', const [Color(0xFF6366F1), Color(0xFF8B5CF6)]),
+            const SizedBox(height: 8),
+            _menuRow('?', 'How it works', const [Color(0xFF3B82F6), Color(0xFF2563EB)]),
+            const SizedBox(height: 10),
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6)]),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: const Center(child: Icon(Icons.menu, color: Colors.white, size: 22)),
+            ),
+          ]),
+        );
+    }
+  }
+
+  Widget _card(BuildContext context, Widget child) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
+        decoration: BoxDecoration(
+          color: context.isDark ? const Color(0xFF111827) : const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: context.isDark ? const Color(0xFF1F2937) : const Color(0xFFE2E8F0)),
+        ),
+        child: child,
+      );
+
+  Widget _legend() {
+    Widget chip(Color c, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 12, height: 12, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(3))),
+          const SizedBox(width: 5),
+          Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+        ]);
+    return Wrap(spacing: 14, runSpacing: 6, alignment: WrapAlignment.center, children: [
+      chip(_cDad, 'Dad'),
+      chip(_cMom, 'Mom'),
+      chip(_cBoth, 'Both'),
+    ]);
+  }
+
+  /// A 7-cell week. [code] is 7 chars from {D,M,B,N}. [ring] outlines one day;
+  /// [changed]/[conflict] outline days yellow/red.
+  Widget _week(String code, {String? label, int? ring, Set<int> changed = const {}, Set<int> conflict = const {}}) {
+    const dow = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    Color bg(String c) => c == 'D' ? _cDad : c == 'M' ? _cMom : c == 'B' ? _cBoth : _cNone;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      if (label != null) ...[
+        Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1, color: _muted)),
+        const SizedBox(height: 6),
+      ],
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        for (int i = 0; i < 7 && i < code.length; i++) ...[
+          Column(children: [
+            Text(dow[i], style: const TextStyle(fontSize: 9, color: _muted)),
+            const SizedBox(height: 3),
+            Container(
+              width: 26,
+              height: 30,
+              decoration: BoxDecoration(
+                color: bg(code[i]),
+                borderRadius: BorderRadius.circular(7),
+                border: ring == i
+                    ? Border.all(color: const Color(0xFF2563EB), width: 2.5)
+                    : conflict.contains(i)
+                        ? Border.all(color: const Color(0xFFEF4444), width: 2.5)
+                        : changed.contains(i)
+                            ? Border.all(color: const Color(0xFFF59E0B), width: 2.5)
+                            : null,
+              ),
+            ),
+          ]),
+          if (i < 6) const SizedBox(width: 4),
+        ],
+      ]),
+    ]);
+  }
+
+  Widget _choice(String label, Color bg, Color ink) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+        child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: ink)),
+      );
+
+  Widget _avatar(String label, Color color) => Column(children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(22)),
+          child: Center(
+              child: Text(label.characters.first.toUpperCase(),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white))),
+        ),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+      ]);
+
+  Widget _dot(Color color, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          width: 14,
+          height: 14,
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(4), border: Border.all(color: color, width: 2.5)),
+        ),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+      ]);
+
+  Widget _menuRow(String icon, String label, List<Color> grad) => Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(color: const Color(0xFFFFFFFF), borderRadius: BorderRadius.circular(9), boxShadow: const [
+              BoxShadow(color: Color(0x14000000), blurRadius: 6, offset: Offset(0, 1)),
+            ]),
+            child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: grad),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Center(
+              child: icon.startsWith('icon_')
+                  ? AppIcon(icon, size: 18, color: Colors.white)
+                  : Text(icon, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      );
 }
+
+/// Which example illustration a tutorial step shows (above the title).
+enum _Vis { none, welcome, cycle, tapDay, times, special, propose, conflict, menu }
 
 class _OnbStep {
   final String icon; // 'icon_*' name, or a literal glyph like '?'
@@ -2007,5 +2281,118 @@ class _OnbStep {
   final String title;
   final String body;
   final String? note;
-  const _OnbStep(this.icon, this.iconBg, this.iconTint, this.title, this.body, {this.note});
+  final _Vis visual;
+  const _OnbStep(this.icon, this.iconBg, this.iconTint, this.title, this.body,
+      {this.note, this.visual = _Vis.none});
+}
+
+// ── Floating action menu (hamburger that opens upward) ───────────────────────────
+/// Replaces the single AI FAB: a menu button that expands upward to expose the AI
+/// assistant, the template catalog, and the how-it-works guide.
+class _EditorActionMenu extends StatefulWidget {
+  const _EditorActionMenu({required this.onAi, required this.onTemplates, required this.onHelp});
+  final VoidCallback onAi;
+  final VoidCallback onTemplates;
+  final VoidCallback onHelp;
+
+  @override
+  State<_EditorActionMenu> createState() => _EditorActionMenuState();
+}
+
+class _EditorActionMenuState extends State<_EditorActionMenu> {
+  bool _open = false;
+
+  void _toggle() => setState(() => _open = !_open);
+  void _run(VoidCallback action) {
+    setState(() => _open = false);
+    action();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          alignment: Alignment.bottomRight,
+          child: _open
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _item('Templates', 'icon_calendar', const [Color(0xFF10B981), Color(0xFF059669)],
+                        () => _run(widget.onTemplates)),
+                    const SizedBox(height: 12),
+                    _item('AI Assistant', 'icon_sparkle', const [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                        () => _run(widget.onAi)),
+                    const SizedBox(height: 12),
+                    _item('How it works', '?', const [Color(0xFF3B82F6), Color(0xFF2563EB)],
+                        () => _run(widget.onHelp)),
+                    const SizedBox(height: 16),
+                  ],
+                )
+              : const SizedBox.shrink(),
+        ),
+        GestureDetector(
+          onTap: _toggle,
+          child: Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: _open
+                      ? const [Color(0xFF6B7280), Color(0xFF4B5563)]
+                      : const [Color(0xFF3B82F6), Color(0xFF8B5CF6)]),
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(color: const Color(0xFF8B5CF6).withValues(alpha: 0.4), offset: const Offset(0, 4), blurRadius: 12),
+              ],
+            ),
+            child: Center(child: Icon(_open ? Icons.close : Icons.menu, color: Colors.white, size: 26)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _item(String label, String icon, List<Color> grad, VoidCallback onTap) {
+    final palette = context.palette;
+    return GestureDetector(
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: palette.surfaceElevated,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 8, offset: const Offset(0, 2))],
+            ),
+            child: Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: grad),
+              borderRadius: BorderRadius.circular(23),
+              boxShadow: [BoxShadow(color: grad.last.withValues(alpha: 0.4), blurRadius: 8, offset: const Offset(0, 2))],
+            ),
+            child: Center(
+              child: icon.startsWith('icon_')
+                  ? AppIcon(icon, size: 22, color: Colors.white)
+                  : Text(icon, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
