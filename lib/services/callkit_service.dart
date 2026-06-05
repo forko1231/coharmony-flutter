@@ -78,6 +78,15 @@ class CallKitService {
 
   /// Shows the native incoming-call UI for a foreground WebSocket ring.
   Future<void> showIncoming(IncomingCallEvent event) {
+    // iOS: the incoming CallKit screen is reported NATIVELY from the VoIP push
+    // (PushKit, see ios/Runner/AppDelegate.swift) for every call, in all app
+    // states. Showing one here from the WebSocket ring too stacks a SECOND CallKit
+    // UI — two accept/reject screens. So on iOS the push is the single source of
+    // the incoming UI; the WebSocket is used only for accepted/ended/rejected.
+    if (Platform.isIOS) {
+      debugPrint('[CALL] CallKit: skipping WS incoming UI on iOS (VoIP push shows it natively)');
+      return Future.value();
+    }
     return showIncomingFromData(
       roomName: event.roomName,
       callerEmail: event.callerEmail,
