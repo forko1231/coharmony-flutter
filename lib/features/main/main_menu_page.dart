@@ -714,6 +714,11 @@ class _MainMenuPageState extends State<MainMenuPage> {
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
+          // MUST be explicit: with padding null, GridView auto-applies the ambient
+          // MediaQuery vertical padding (the status-bar / home-indicator insets),
+          // which injected a ~status-bar-tall gap between the weekday row and the
+          // day grid on notch/Dynamic-Island phones.
+          padding: EdgeInsets.zero,
           itemCount: cells.length,
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 7,
