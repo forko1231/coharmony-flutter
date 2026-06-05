@@ -120,16 +120,23 @@ class PatternHelpers {
     final n = nights.length;
     final days = <GeneratedDay>[];
     for (int d = 0; d < n; d++) {
-      final dayParent = nights[d]; // who has this day / overnight
+      final dayParent = nights[d]; // who has this day's OVERNIGHT
       final prevDay = nights[(d - 1 + n) % n]; // the day before (wraps the cycle)
 
-      // A real handoff happens only when the parent changes from the day before.
+      // A real handoff happens only when the overnight parent changes from the day
+      // before.
       final isTransfer = prevDay != dayParent && prevDay != 'None' && dayParent != 'None';
 
+      // The renderer draws parentAssignment from the top until transferTime, then the
+      // OTHER parent from transferTime to the bottom (the overnight). So on a CHANGEOVER
+      // day the morning belongs to the PREVIOUS parent, who hands off to dayParent for
+      // the overnight. Using dayParent here would send the overnight to the wrong parent
+      // (the classic "Dad → transfer → Mom, next day Dad" backwards handoff). On a
+      // non-transfer day prevDay == dayParent, so solid days are unaffected.
       days.add(GeneratedDay(
         weekIndex: d ~/ 7,
         dayIndex: d % 7,
-        parentAssignment: dayParent,
+        parentAssignment: isTransfer ? prevDay : dayParent,
         transferTime: isTransfer ? timeForTransferDay(d) : null,
       ));
     }
