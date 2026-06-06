@@ -50,6 +50,9 @@ class _SsoButtonsState extends State<SsoButtons> {
       final ok = await ServiceLocator.auth.signInWithGoogle(idToken);
       if (!mounted) return;
       if (ok) {
+        // SSO implies "this is my device" — always keep me signed in (one-tap to
+        // re-auth anyway). No checkbox; logout still force-clears this.
+        await Preferences.setBool('RememberMe', true);
         await Preferences.setString('email', account.email);
         if (mounted) await routeAfterAuth(context);
       } else {
@@ -82,8 +85,9 @@ class _SsoButtonsState extends State<SsoButtons> {
       );
       if (!mounted) return;
       if (ok) {
-        // The relay-email gate (if any) is handled by the post-auth router via the
-        // server record — we don't touch the email here.
+        // Keep me signed in (see Google handler). The relay-email gate (if any) is
+        // handled by the post-auth router via the server record — not touched here.
+        await Preferences.setBool('RememberMe', true);
         if (mounted) await routeAfterAuth(context);
       } else {
         _toast('Could not sign in with Apple. Please try again.');
