@@ -8,6 +8,7 @@ import '../features/onboarding/schedule_review_page.dart';
 import '../features/onboarding/schedule_sent_page.dart';
 import '../features/onboarding/template_apply_page.dart';
 import '../features/onboarding/tour_page.dart';
+import '../features/schedule/live_schedule_page.dart';
 import '../features/shell/app_shell.dart';
 import '../features/subscription/subscription_page.dart';
 import '../services/onboarding_router.dart';
@@ -25,6 +26,8 @@ Widget pageForOnboarding(OnboardingDestination dest) {
       return const RoleChoicePage();
     case OnboardingDestination.partnerInvite:
       return const PartnerInvitePage();
+    case OnboardingDestination.liveEditor:
+      return const LiveSchedulePage(isOnboarding: true);
     case OnboardingDestination.scheduleReview:
       return const ScheduleReviewPage();
     case OnboardingDestination.templateApply:

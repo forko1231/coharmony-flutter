@@ -11,6 +11,7 @@ import 'subscription_service.dart';
 enum OnboardingDestination {
   roleChoice,
   partnerInvite,
+  liveEditor,
   scheduleReview,
   templateApply,
   scheduleSent,
@@ -55,36 +56,12 @@ class OnboardingRouter {
       return OnboardingDestination.partnerInvite;
     }
 
-    // Step 2: schedule.
-    var hasApproved = false;
-    var partnerHasProposal = false;
-    var userHasOwnProposal = false;
-    try {
-      final approved = await _proposals.getApprovedSchedule();
-      final active = await _proposals.getActiveProposal();
-      hasApproved = approved?.hasSchedule == true;
-      final p = active?.proposal;
-      final hasActive = active?.hasActiveProposal == true && p != null;
-      partnerHasProposal = hasActive && !p.isCurrentUserProposer;
-      userHasOwnProposal = hasActive && p.isCurrentUserProposer;
-    } catch (_) {
-      // network blip — treat as "no schedule"
-    }
-
-    // Partner sent a proposal the user needs to review.
-    if (!hasApproved && partnerHasProposal) {
-      return OnboardingDestination.scheduleReview;
-    }
-
-    // Nobody has any schedule activity yet — pick a starting point.
-    if (!hasApproved && !partnerHasProposal && !userHasOwnProposal) {
-      // TODO(template): PendingTemplateService.clear() once template state is ported.
-      return OnboardingDestination.templateApply;
-    }
-
-    // Step 2.5: "schedule sent" confirmation after a fresh submit (one-shot).
-    if (!hasApproved && userHasOwnProposal && !OnboardingState.scheduleAcknowledged) {
-      return OnboardingDestination.scheduleSent;
+    // Step 2: the LIVE schedule. The user builds one shared schedule in the full live
+    // editor and continues — the co-parent does NOT need to have joined or agreed yet
+    // (agreement is a later, in-app step, not an onboarding gate). One-shot, gated on a
+    // local acknowledgement set when the user taps Continue in the editor.
+    if (!OnboardingState.scheduleAcknowledged) {
+      return OnboardingDestination.liveEditor;
     }
 
     // Step 3: subscription (paywall last for conversion).
