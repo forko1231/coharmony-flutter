@@ -27,7 +27,7 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     // Let the notification layer switch tabs (mirrors MAUI's Shell.GoToAsync).
     AppNavigation.goToTab = (i) {
-      if (mounted && i >= 0 && i < _tabs.length) setState(() => _index = i);
+      if (mounted) _setTab(i);
     };
   }
 
@@ -35,6 +35,14 @@ class _AppShellState extends State<AppShell> {
   void dispose() {
     AppNavigation.goToTab = null;
     super.dispose();
+  }
+
+  void _setTab(int i) {
+    if (i < 0 || i >= _tabs.length) return;
+    setState(() => _index = i);
+    // Messages (tab 2) is kept alive in the IndexedStack, so its initState runs once.
+    // Nudge it to refresh partner/contact state each time it's (re)shown.
+    if (i == 2) AppNavigation.onMessagesTabShown?.call();
   }
 
   static const _tabs = [
@@ -62,9 +70,7 @@ class _AppShellState extends State<AppShell> {
     return Scaffold(
       backgroundColor: palette.background,
       body: AppShellScope(
-        goToTab: (i) {
-          if (i >= 0 && i < _tabs.length) setState(() => _index = i);
-        },
+        goToTab: _setTab,
         child: IndexedStack(index: _index, children: _pages),
       ),
       bottomNavigationBar: NavigationBarTheme(
@@ -82,7 +88,7 @@ class _AppShellState extends State<AppShell> {
         ),
         child: NavigationBar(
           selectedIndex: _index,
-          onDestinationSelected: (i) => setState(() => _index = i),
+          onDestinationSelected: _setTab,
           destinations: [
             for (int i = 0; i < _tabs.length; i++)
               NavigationDestination(

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../../models/message_models.dart';
+import '../../services/app_navigation.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
@@ -26,7 +27,7 @@ class MessagingPage extends StatefulWidget {
   State<MessagingPage> createState() => _MessagingPageState();
 }
 
-class _MessagingPageState extends State<MessagingPage> {
+class _MessagingPageState extends State<MessagingPage> with WidgetsBindingObserver {
   bool _loading = true;
   List<_ContactSection> _sections = const [];
   StreamSubscription<MessageReceivedEvent>? _msgSub;
@@ -34,13 +35,27 @@ class _MessagingPageState extends State<MessagingPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // The IndexedStack keeps this page alive, so initState runs once. Re-fetch each
+    // time the Messages tab is (re)shown — catches a co-parent accepting an invite.
+    AppNavigation.onMessagesTabShown = () {
+      if (mounted) _load(silent: true);
+    };
     _init();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    AppNavigation.onMessagesTabShown = null;
     _msgSub?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Back from background → a co-parent may have accepted while we were away.
+    if (state == AppLifecycleState.resumed && mounted) _load(silent: true);
   }
 
   Future<void> _init() async {
@@ -233,7 +248,10 @@ class _MessagingPageState extends State<MessagingPage> {
             child: LoadingSwitcher(
               loading: _loading,
               skeleton: const SkeletonListTiles(),
-              child: SingleChildScrollView(
+              child: RefreshIndicator(
+                onRefresh: () => _load(silent: true),
+                child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
                 // topCenter, not center: Center vertically-centers the column, so when
                 // there are few contacts (e.g. only a co-parent) it floated to the
@@ -258,6 +276,7 @@ class _MessagingPageState extends State<MessagingPage> {
                     ),
                   ),
                 ),
+              ),
               ),
             ),
           ),

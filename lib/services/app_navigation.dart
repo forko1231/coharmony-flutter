@@ -14,6 +14,12 @@ class AppNavigation {
   /// 2 Messager, 3 Payments, 4 Map). Null when the shell isn't mounted.
   static void Function(int index)? goToTab;
 
+  /// Fired by [AppShell] whenever the Messages tab is (re)selected. The shell keeps
+  /// tab bodies alive in an IndexedStack, so MessagingPage's initState runs only once;
+  /// this lets it re-fetch partner/contact state each time it's shown (e.g. after a
+  /// co-parent accepts an invite). Registered by MessagingPage.
+  static void Function()? onMessagesTabShown;
+
   /// True while a chat screen is in the foreground — used to suppress message
   /// banners (mirrors MAUI's `IsCurrentlyInChatInterface`).
   static bool inChat = false;
