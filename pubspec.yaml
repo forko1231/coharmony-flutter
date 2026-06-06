@@ -16,7 +16,10 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+# Version line continues the published CoHarmony app (App Store / Play). Source of truth —
+# build-name = CFBundleShortVersionString / Android versionName; build-number = CFBundleVersion
+# / Android versionCode. Bump the +N every upload (must exceed the last store build).
+version: 3.01.59+117
 
 environment:
   sdk: ^3.12.1
