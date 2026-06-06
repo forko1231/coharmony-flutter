@@ -176,6 +176,7 @@ class _AccountCreationPageState extends State<AccountCreationPage> {
     final palette = context.palette;
     return Scaffold(
       backgroundColor: palette.background,
+      resizeToAvoidBottomInset: false,
       body: Column(
         children: [
           AppHeader(
@@ -262,6 +263,8 @@ class _AccountCreationPageState extends State<AccountCreationPage> {
                             controller: _confirm,
                             hint: 'Confirm your password',
                             obscure: _obscureConfirm,
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) { if (!_loading) _createAccount(); },
                             trailing:
                                 _eyeToggle(_obscureConfirm, () => setState(() => _obscureConfirm = !_obscureConfirm)),
                           ),

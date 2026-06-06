@@ -127,6 +127,7 @@ class _LoginPageState extends State<LoginPage> {
     final palette = context.palette;
     return Scaffold(
       backgroundColor: palette.background,
+      resizeToAvoidBottomInset: false,
       body: Column(
         children: [
           AppHeader(
@@ -230,6 +231,7 @@ class _LoginPageState extends State<LoginPage> {
                         hint: 'Enter your password',
                         obscure: _obscure,
                         textInputAction: TextInputAction.done,
+                        onSubmitted: (_) { if (!_loading) _signIn(); },
                         trailing: GestureDetector(
                           onTap: () => setState(() => _obscure = !_obscure),
                           child: AppIcon(_obscure ? 'icon_eye_off' : 'icon_eye', size: 22, color: palette.textSecondary),
