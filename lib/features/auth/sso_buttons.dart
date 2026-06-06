@@ -12,8 +12,10 @@ import '../../theme/app_palette.dart';
 /// Passed to Google as the server client id so the returned ID token's audience
 /// matches what the backend validates against `Authentication:Google:ClientIds`.
 /// Provide at build time: `--dart-define=GOOGLE_SERVER_CLIENT_ID=xxx.apps.googleusercontent.com`.
-const String kGoogleServerClientId =
-    String.fromEnvironment('GOOGLE_SERVER_CLIENT_ID', defaultValue: '');
+const String kGoogleServerClientId = String.fromEnvironment(
+  'GOOGLE_SERVER_CLIENT_ID',
+  defaultValue: '877762151190-uq4gdsd220frgoa7eko2gap3qjce0be8.apps.googleusercontent.com',
+);
 
 /// Apple + Google one-tap sign-in, side by side. SSO find-or-creates the account
 /// server-side, so a single tap covers both "sign up" and "log in" — no need to
