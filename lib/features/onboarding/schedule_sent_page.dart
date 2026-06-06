@@ -240,7 +240,7 @@ class _ScheduleSentPageState extends State<ScheduleSentPage> {
               Container(
                 width: double.infinity,
                 color: palette.background,
-                padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
+                padding: EdgeInsets.fromLTRB(24, 16, 24, 40 + MediaQuery.viewPaddingOf(context).bottom),
                 child: GestureDetector(
                   onTap: _continue,
                   child: Container(

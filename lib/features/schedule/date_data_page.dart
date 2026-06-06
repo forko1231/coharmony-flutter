@@ -643,7 +643,7 @@ class _DateDataPageState extends State<DateDataPage> {
   Widget _addEventBar(BuildContext context) {
     final palette = context.palette;
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 48),
+      padding: EdgeInsets.fromLTRB(20, 16, 20, 48 + MediaQuery.viewPaddingOf(context).bottom),
       decoration: BoxDecoration(
         color: palette.surfaceElevated,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),

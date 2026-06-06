@@ -112,7 +112,7 @@ class _RoleChoicePageState extends State<RoleChoicePage> {
       body: Stack(
         children: [
           SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 80, 24, 32),
+            padding: EdgeInsets.fromLTRB(24, 80, 24, 32 + MediaQuery.viewPaddingOf(context).bottom),
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 560),

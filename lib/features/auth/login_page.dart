@@ -293,7 +293,7 @@ class _LoginPageState extends State<LoginPage> {
 
           // Sign In button
           Container(
-            padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
+            padding: EdgeInsets.fromLTRB(24, 20, 24, 36 + MediaQuery.viewPaddingOf(context).bottom),
             decoration: BoxDecoration(
               color: palette.surface,
               borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),

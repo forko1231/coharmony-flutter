@@ -18,7 +18,9 @@ class BottomActionBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     return Container(
-      padding: padding,
+      // Add the Android nav-bar / iOS home-indicator inset so the action never
+      // sits under the system bar on edge-to-edge devices.
+      padding: padding.add(EdgeInsets.only(bottom: MediaQuery.viewPaddingOf(context).bottom)),
       decoration: BoxDecoration(
         color: palette.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),

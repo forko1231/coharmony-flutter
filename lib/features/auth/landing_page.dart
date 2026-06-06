@@ -118,7 +118,7 @@ class LandingPage extends StatelessWidget {
 
           // ── Bottom action panel ───────────────────────────────────────
           Container(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+            padding: EdgeInsets.fromLTRB(24, 24, 24, 40 + MediaQuery.viewPaddingOf(context).bottom),
             decoration: BoxDecoration(
               color: palette.surface,
               borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),

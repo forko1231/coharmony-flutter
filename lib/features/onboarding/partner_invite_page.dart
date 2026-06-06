@@ -216,7 +216,7 @@ class _PartnerInvitePageState extends State<PartnerInvitePage> {
               const OnboardingStepHeader(step: 1),
               Expanded(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+                  padding: EdgeInsets.fromLTRB(24, 24, 24, 40 + MediaQuery.viewPaddingOf(context).bottom),
                   child: Center(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 560),

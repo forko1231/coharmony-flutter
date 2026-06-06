@@ -271,7 +271,7 @@ class _ScheduleReviewPageState extends State<ScheduleReviewPage> {
               // Sticky footer
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+                padding: EdgeInsets.fromLTRB(24, 16, 24, 32 + MediaQuery.viewPaddingOf(context).bottom),
                 decoration: BoxDecoration(
                   color: palette.surface,
                   boxShadow: [

@@ -132,7 +132,7 @@ class _TourPageState extends State<TourPage> {
           Container(
             width: double.infinity,
             color: palette.background,
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
+            padding: EdgeInsets.fromLTRB(24, 16, 24, 40 + MediaQuery.viewPaddingOf(context).bottom),
             child: GestureDetector(
               onTap: _next,
               child: Container(
