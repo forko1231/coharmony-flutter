@@ -107,6 +107,10 @@ class LiveScheduleService {
 
   Future<LiveResult> agree() => _send('POST', 'agree', const {});
 
+  // Live presence: tell the server "I'm in the editor" (client calls ~every 10s while
+  // open). Returns current state so it doubles as a refresh.
+  Future<LiveResult> presenceHeartbeat() => _send('POST', 'presence', const {});
+
   // ── internals ──────────────────────────────────────────────────────────────
   static String _u(String path) => path.isEmpty ? 'api/schedule/live' : 'api/schedule/live/$path';
 
@@ -159,6 +163,8 @@ class LiveScheduleData {
   final String? agreedByB;
   final DateTime? agreedAtUtc;
   final LockInfo? locked; // schedule-wide lock held by someone
+  final bool presentA; // A is in the editor right now (heartbeat fresh)
+  final bool presentB;
   final List<LiveDay> days;
   final List<LiveOverride> overrides;
   final List<DayLockInfo> dayLocks;
@@ -174,6 +180,8 @@ class LiveScheduleData {
     this.agreedByB,
     this.agreedAtUtc,
     this.locked,
+    this.presentA = false,
+    this.presentB = false,
     this.days = const [],
     this.overrides = const [],
     this.dayLocks = const [],
@@ -184,6 +192,7 @@ class LiveScheduleData {
   factory LiveScheduleData.fromJson(Map<String, dynamic> j) {
     List<T> list<T>(String key, T Function(Map<String, dynamic>) f) =>
         (j[key] as List?)?.whereType<Map<String, dynamic>>().map(f).toList() ?? <T>[];
+    final pres = j['presence'] as Map<String, dynamic>?;
     return LiveScheduleData(
       liveScheduleId: (j['liveScheduleId'] as num?)?.toInt() ?? 0,
       emailA: j['emailA'] as String? ?? '',
@@ -195,10 +204,25 @@ class LiveScheduleData {
       agreedByB: j['agreedByB'] as String?,
       agreedAtUtc: _dt(j['agreedAtUtc']),
       locked: LockInfo.fromJson(j['locked'] as Map<String, dynamic>?),
+      presentA: pres?['a'] as bool? ?? false,
+      presentB: pres?['b'] as bool? ?? false,
       days: list('days', LiveDay.fromJson),
       overrides: list('overrides', LiveOverride.fromJson),
       dayLocks: list('dayLocks', DayLockInfo.fromJson),
     );
+  }
+
+  /// True if the OTHER parent (not [meEmail]) currently has the editor open.
+  bool partnerPresent(String meEmail) {
+    final me = meEmail.toLowerCase();
+    final otherIsA = emailA.toLowerCase() != me;
+    return otherIsA ? presentA : presentB;
+  }
+
+  /// The other parent's email (lowercased) relative to [meEmail].
+  String partnerEmail(String meEmail) {
+    final me = meEmail.toLowerCase();
+    return emailA.toLowerCase() == me ? emailB : emailA;
   }
 
   LiveDay? dayAt(int weekIndex, int dayIndex) {

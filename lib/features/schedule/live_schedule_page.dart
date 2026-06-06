@@ -3,24 +3,32 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../models/custody_models.dart';
+import '../../models/location_models.dart';
 import '../../navigation/app_navigator.dart';
 import '../../services/custody_templates/pending_template_service.dart';
+import '../../services/holiday_resolver.dart';
 import '../../services/live_schedule_service.dart';
 import '../../services/onboarding_state.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
+import '../ai/ai_chat_page.dart';
+import 'day_editor_view.dart';
+import 'editor_models.dart';
+import 'override_editor_view.dart';
 import 'templates/template_catalog_page.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
+import '../../widgets/app_icon.dart';
 
 /// The LIVE custody schedule editor — one shared schedule both co-parents edit in real
-/// time. Replaces the proposal draft/submit/review flow. Same visual language as
+/// time. Replaces the proposal draft/submit/review flow. Same visual language as the old
 /// CustodySchedulePage (week cards, tappable day cells, a bottom-sheet day editor,
-/// week-length dropdown) but:
+/// special-day overrides, the floating action menu, the how-it-works walkthrough) but:
 ///   • edits hit /api/schedule/live with the current version (stale → reload),
 ///   • week-length + template/AI take the schedule-wide lock,
-///   • locks show LIVE (greyed days, a "co-parent is editing" overlay) via the WS ping,
-///     with the 409/423 server reject as the fallback for the sub-second window,
+///   • locks + presence show LIVE (greyed days, a "co-parent is editing" overlay, and a
+///     "your co-parent is also here" banner) via the WS ping + presence heartbeat,
 ///   • both parents tap Agree to lock in the schedule-of-record.
 class LiveSchedulePage extends StatefulWidget {
   const LiveSchedulePage({super.key, this.isOnboarding = false});
@@ -35,11 +43,17 @@ class LiveSchedulePage extends StatefulWidget {
 class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBindingObserver {
   static const _dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   static const _weekOptions = [1, 2, 3, 4, 6, 8];
+  static const _guideSeenKey = 'live_editor_guide_seen';
+  static const _months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
 
   LiveScheduleService get _svc => ServiceLocator.liveSchedule;
   String _me = '';
 
   LiveScheduleData? _data;
+  List<PointOfInterest> _pois = const [];
   bool _loading = true;
   bool _noPartner = false;
   bool _busy = false; // a mutating call is in flight
@@ -47,6 +61,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
 
   StreamSubscription<int>? _wsSub;
   Timer? _poll;
+  Timer? _presence;
 
   @override
   void initState() {
@@ -56,8 +71,10 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     // Live updates: refetch when the co-parent pings us over the socket…
     _wsSub = _svc.onChanged.listen((_) => _refresh());
     // …and a gentle poll while the editor is open as the fallback (covers a dropped
-    // socket and surfaces lock changes within a few seconds).
+    // socket and surfaces lock/presence changes within a few seconds).
     _poll = Timer.periodic(const Duration(seconds: 4), (_) => _refresh());
+    // Presence: tell the co-parent we're in the editor (and pick up their presence).
+    _presence = Timer.periodic(const Duration(seconds: 10), (_) => _beat());
     _load();
   }
 
@@ -66,31 +83,55 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     WidgetsBinding.instance.removeObserver(this);
     _wsSub?.cancel();
     _poll?.cancel();
+    _presence?.cancel();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refresh();
+    if (state == AppLifecycleState.resumed) {
+      _refresh();
+      _beat();
+    }
   }
 
   // ── data ───────────────────────────────────────────────────────────────────
   Future<void> _load() async {
     setState(() => _loading = true);
     final r = await _svc.get();
+    // POIs power the "choose existing location" picker in the day/override editors.
+    try {
+      _pois = await ServiceLocator.location.getPois();
+    } catch (_) {/* continue without saved locations */}
     if (!mounted) return;
     setState(() {
       _loading = false;
       _noPartner = r.op == LiveOp.noPartner;
       if (r.data != null) _data = r.data;
     });
-    // Second-parent onboarding: if the co-parent already built + agreed a schedule,
-    // show a one-shot "review it" intro before they edit/Continue.
+    _beat(); // announce presence immediately on open
+    _maybeShowIntroOrGuide();
+  }
+
+  void _maybeShowIntroOrGuide() {
     final d = _data;
+    // Second-parent onboarding: if the co-parent already built + agreed a schedule, show
+    // a one-shot "review it" intro before they edit/Continue. Otherwise, first-time users
+    // get the how-it-works walkthrough.
     if (widget.isOnboarding && !_introShown && d != null && d.days.isNotEmpty && _partnerAgreed(d)) {
       _introShown = true;
       WidgetsBinding.instance.addPostFrameCallback((_) => _showReviewIntro());
+    } else if (!Preferences.getBool(_guideSeenKey)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showGuide());
     }
+  }
+
+  // Presence heartbeat — silent; just refresh our copy of the schedule (incl. who's here).
+  Future<void> _beat() async {
+    if (_busy || !mounted) return;
+    final r = await _svc.presenceHeartbeat();
+    if (!mounted || r.data == null) return;
+    setState(() => _data = r.data);
   }
 
   // Silent refresh used by the WS ping / poll — don't flicker the spinner, and don't
@@ -139,6 +180,20 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     final l = _data?.locked;
     return l != null && l.by.toLowerCase() != _me;
   }
+
+  // The co-parent is actively editing (holds the whole-schedule lock or a day lock).
+  bool get _partnerEditing {
+    final d = _data;
+    if (d == null) return false;
+    if (_scheduleLockedByOther) return true;
+    for (final l in d.dayLocks) {
+      if (l.by.toLowerCase() != _me) return true;
+    }
+    return false;
+  }
+
+  // The co-parent has the editor open (heartbeat fresh) but isn't mid-edit.
+  bool get _partnerHere => _data?.partnerPresent(_me) ?? false;
 
   // ── actions ─────────────────────────────────────────────────────────────────
   Future<void> _changeWeekLength(int weeks) async {
@@ -205,6 +260,17 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     await _applyResult(apply);
   }
 
+  // Open the AI assistant; it applies to the live schedule under the lock. Refresh on return.
+  Future<void> _openAi() async {
+    await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AiChatPage(chatContext: 'schedule')));
+    if (!mounted) return;
+    await _refresh();
+  }
+
+  // Open the template catalog from the floating menu (same flow as the inline CTA).
+  Future<void> _openTemplates() => _useTemplate();
+
   Future<void> _tapDay(int weekIndex, int dayIndex) async {
     final d = _data;
     if (d == null) return;
@@ -232,122 +298,65 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   }
 
   Future<void> _openDayEditor(int weekIndex, int dayIndex) async {
-    final existing = _data?.dayAt(weekIndex, dayIndex);
-    var parent = existing?.parentAssignment ?? 'None';
-    TimeOfDay? time = _tod(existing?.transferTime);
-
-    final result = await showModalBottomSheet<_DayEdit>(
+    final d0 = _data;
+    if (d0 == null) return;
+    final existing = d0.dayAt(weekIndex, dayIndex);
+    final input = ProposalDayDto(
+      weekIndex: weekIndex,
+      dayIndex: dayIndex,
+      parentAssignment: existing?.parentAssignment ?? 'None',
+      transferTime: existing?.transferTime,
+      transferEndTime: existing?.transferEndTime,
+      transferLatitude: existing?.transferLatitude,
+      transferLongitude: existing?.transferLongitude,
+      transferLocationName: existing?.transferLocationName,
+      transferAddress: existing?.transferAddress,
+    );
+    DayEditCommit? latest;
+    final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
         final palette = ctx.palette;
-        return StatefulBuilder(builder: (ctx, setSheet) {
-          Widget parentBtn(String value, String label, Color color) {
-            final sel = parent == value;
-            return Expanded(
-              child: GestureDetector(
-                onTap: () => setSheet(() => parent = value),
-                child: Container(
-                  height: 56,
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  decoration: BoxDecoration(
-                    color: value == 'None' ? Colors.transparent : color,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: sel ? AppColors.primaryBlue : palette.border,
-                      width: sel ? 3 : 1,
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(label,
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: palette.textPrimary)),
-                  ),
-                ),
-              ),
-            );
-          }
-
-          return Container(
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
             decoration: BoxDecoration(
               color: palette.surfaceElevated,
               borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            padding: EdgeInsets.only(
-                left: 16, right: 16, top: 12, bottom: 16 + MediaQuery.of(ctx).viewInsets.bottom),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40, height: 5, margin: const EdgeInsets.only(bottom: 12),
-                    decoration: BoxDecoration(
-                        color: AppColors.primaryBlue.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(3)),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _grabber(),
+                  DayEditorView(
+                    weekIndex: weekIndex,
+                    dayIndex: dayIndex,
+                    title: (d0.patternLength) > 1
+                        ? 'Week ${weekIndex + 1} · ${_dayNames[dayIndex]}'
+                        : _dayNames[dayIndex],
+                    data: input,
+                    baseline: null,
+                    pois: _pois,
+                    onCommit: (c) => latest = c,
+                    onClose: () => Navigator.of(ctx).pop(false),
                   ),
-                ),
-                Text(
-                  (_data?.patternLength ?? 1) > 1 ? 'Week ${weekIndex + 1} · ${_dayNames[dayIndex]}' : _dayNames[dayIndex],
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: palette.textPrimary),
-                ),
-                const SizedBox(height: 4),
-                Text('Who has the child this day?', style: TextStyle(fontSize: 13, color: palette.textSecondary)),
-                const SizedBox(height: 14),
-                Row(children: [
-                  parentBtn('Husband', 'Dad', AppColors.parentDad),
-                  parentBtn('Wife', 'Mom', AppColors.parentMom),
-                  parentBtn('Both', 'Both', AppColors.parentBoth),
-                  parentBtn('None', 'None', Colors.transparent),
-                ]),
-                const SizedBox(height: 16),
-                // Optional handoff time
-                InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () async {
-                    final picked = await showTimePicker(context: ctx, initialTime: time ?? const TimeOfDay(hour: 9, minute: 0));
-                    if (picked != null) setSheet(() => time = picked);
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: palette.border),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(children: [
-                      const Icon(Icons.schedule, size: 20),
-                      const SizedBox(width: 10),
-                      Text(time == null ? 'Add handoff time (optional)' : 'Handoff: ${time!.format(ctx)}',
-                          style: TextStyle(fontSize: 15, color: palette.textPrimary)),
-                      const Spacer(),
-                      if (time != null)
-                        GestureDetector(
-                          onTap: () => setSheet(() => time = null),
-                          child: Icon(Icons.close, size: 18, color: palette.textSecondary),
-                        ),
-                    ]),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryBlue,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    ),
-                    onPressed: () => Navigator.of(ctx).pop(_DayEdit(parent, time)),
-                    child: const Text('Save', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-                  ),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  _sheetSaveButton(ctx, 'Save', () => Navigator.of(ctx).pop(true)),
+                ],
+              ),
             ),
-          );
-        });
+          ),
+        );
       },
     );
 
-    if (result == null || !mounted) return;
+    if (saved != true || !mounted) return;
+    final c = latest;
+    if (c == null) return; // opened, no change
     final d = _data;
     if (d == null) return;
     setState(() => _busy = true);
@@ -356,10 +365,131 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       LiveDay(
         weekIndex: weekIndex,
         dayIndex: dayIndex,
-        parentAssignment: result.parent,
-        transferTime: result.time == null ? null : _todStr(result.time!),
+        parentAssignment: c.parent,
+        transferTime: c.transferTime == null ? null : _todStr(c.transferTime!),
+        transferEndTime: c.transferEndTime == null ? null : _todStr(c.transferEndTime!),
+        transferLatitude: c.location?.latitude,
+        transferLongitude: c.location?.longitude,
+        transferLocationName: c.location?.name,
+        transferAddress: c.location?.address,
       ),
     );
+    if (mounted) setState(() => _busy = false);
+    await _applyResult(res);
+  }
+
+  // ── Overrides (special days) ──────────────────────────────────────────────────
+  Future<void> _openOverrideEditor({LiveOverride? existing}) async {
+    if (_scheduleLockedByOther) {
+      _toast('Your co-parent is editing the whole schedule right now.');
+      return;
+    }
+    final exDto = existing == null
+        ? null
+        : ProposalOverrideDto(
+            dateKey: existing.dateKey,
+            month: existing.month,
+            day: existing.day,
+            parentAssignment: existing.parentAssignment,
+            transferTime: existing.transferTime,
+            transferEndTime: existing.transferEndTime,
+            description: existing.description,
+            isAnnual: existing.isAnnual,
+            holidayRule: existing.holidayRule,
+            alternationMode: existing.alternationMode,
+            alternationStartParent: existing.alternationStartParent,
+            transferLatitude: existing.transferLatitude,
+            transferLongitude: existing.transferLongitude,
+            transferLocationName: existing.transferLocationName,
+            transferAddress: existing.transferAddress,
+          );
+    final result = await showModalBottomSheet<OverrideDayEditResult>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final palette = ctx.palette;
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Container(
+            decoration: BoxDecoration(
+              color: palette.surfaceElevated,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _grabber(),
+                  OverrideEditorView(
+                    existingDateKey: existing?.dateKey,
+                    existing: exDto,
+                    baseline: null,
+                    pois: _pois,
+                    onApply: (r) => Navigator.of(ctx).pop(r),
+                    onClose: () => Navigator.of(ctx).pop(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (result == null || !mounted) return;
+    final d = _data;
+    if (d == null) return;
+    setState(() => _busy = true);
+    var res = await _svc.upsertOverride(
+      d.version,
+      LiveOverride(
+        dateKey: result.dateKey,
+        month: result.selectedDate.month,
+        day: result.selectedDate.day,
+        parentAssignment: result.parent,
+        transferTime: result.transferTime == null ? null : _todStr(result.transferTime!),
+        transferEndTime: result.transferEndTime == null ? null : _todStr(result.transferEndTime!),
+        description: result.description,
+        isAnnual: result.isAnnual,
+        holidayRule: result.holidayRule,
+        alternationMode: result.alternationMode,
+        alternationStartParent: result.alternationStartParent,
+        transferLatitude: result.transferLocation?.latitude,
+        transferLongitude: result.transferLocation?.longitude,
+        transferLocationName: result.transferLocation?.name,
+        transferAddress: result.transferLocation?.address,
+      ),
+    );
+    // If the date changed on an existing override, remove the stale old-date entry.
+    if (res.ok && existing != null && result.dateWasChanged) {
+      final v = res.data?.version ?? d.version;
+      res = await _svc.deleteOverride(v, existing.dateKey);
+    }
+    if (mounted) setState(() => _busy = false);
+    await _applyResult(res);
+  }
+
+  Future<void> _deleteOverride(LiveOverride o) async {
+    final d = _data;
+    if (d == null || _busy) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove special day?'),
+        content: Text('Remove "${_overrideLabel(o)}" from the schedule?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Remove', style: TextStyle(color: AppColors.dangerRed))),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _busy = true);
+    final res = await _svc.deleteOverride(d.version, o.dateKey);
     if (mounted) setState(() => _busy = false);
     await _applyResult(res);
   }
@@ -416,6 +546,14 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     );
   }
 
+  void _showGuide() {
+    showDialog(
+      context: context,
+      barrierColor: const Color(0xCC000000),
+      builder: (_) => const _GuideDialog(),
+    ).then((_) => Preferences.setBool(_guideSeenKey, true));
+  }
+
   // ── helpers ───────────────────────────────────────────────────────────────
   static TimeOfDay? _tod(String? s) {
     if (s == null || s.isEmpty) return null;
@@ -438,6 +576,37 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     final at = email.indexOf('@');
     return at > 0 ? email.substring(0, at) : email;
   }
+
+  String _overrideLabel(LiveOverride o) {
+    if (o.holidayRule != null && o.holidayRule!.isNotEmpty) {
+      return HolidayResolver.getDisplayName(o.holidayRule!);
+    }
+    if (o.description != null && o.description!.isNotEmpty) return o.description!;
+    return '${_months[(o.month.clamp(1, 12)) - 1]} ${o.day}';
+  }
+
+  Widget _grabber() => Center(
+        child: Container(
+          width: 40,
+          height: 5,
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+              color: AppColors.primaryBlue.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(3)),
+        ),
+      );
+
+  Widget _sheetSaveButton(BuildContext ctx, String label, VoidCallback onTap) => SizedBox(
+        width: double.infinity,
+        height: 50,
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primaryBlue,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+          onPressed: onTap,
+          child: Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+        ),
+      );
 
   // ── build ─────────────────────────────────────────────────────────────────
   @override
@@ -472,11 +641,15 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
             _header(context),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _statusBar(context, d),
+                    if (_partnerEditing || _partnerHere) ...[
+                      const SizedBox(height: 10),
+                      _presenceBanner(context, d),
+                    ],
                     const SizedBox(height: 12),
                     _weekLengthRow(context, d),
                     const SizedBox(height: 12),
@@ -487,7 +660,9 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
                       _weekCard(context, d, w),
                       const SizedBox(height: 12),
                     ],
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
+                    _overridesSection(context, d),
+                    const SizedBox(height: 12),
                     if (widget.isOnboarding) _continueBar(context) else _agreeBar(context, d),
                   ],
                 ),
@@ -497,6 +672,12 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         ),
         // Live whole-schedule lock overlay.
         if (_scheduleLockedByOther) _lockOverlay(context, d),
+        // Floating action menu (AI / Templates / Help) — opens upward.
+        Positioned(
+          right: 20,
+          bottom: 24,
+          child: _EditorActionMenu(onAi: _openAi, onTemplates: _openTemplates, onHelp: _showGuide),
+        ),
       ],
     );
   }
@@ -541,6 +722,30 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         Icon(agreed ? Icons.check_circle : Icons.edit_calendar, size: 18, color: color),
         const SizedBox(width: 10),
         Expanded(child: Text(text, style: TextStyle(fontSize: 13, color: palette.textPrimary))),
+      ]),
+    );
+  }
+
+  // "Your co-parent is also here / editing" — the live presence banner.
+  Widget _presenceBanner(BuildContext context, LiveScheduleData d) {
+    final name = _shortName(d.partnerEmail(_me));
+    final editing = _partnerEditing;
+    final color = editing ? AppColors.warningAmber : AppColors.successGreen;
+    final text = editing ? '$name is editing right now…' : '$name is also here';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(children: [
+        if (editing)
+          SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: color))
+        else
+          Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+        const SizedBox(width: 10),
+        Expanded(child: Text(text, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color))),
       ]),
     );
   }
@@ -697,6 +902,94 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     );
   }
 
+  // Special days (overrides) — list + add button.
+  Widget _overridesSection(BuildContext context, LiveScheduleData d) {
+    final palette = context.palette;
+    final overrides = [...d.overrides]..sort((a, b) {
+        final am = a.month * 100 + a.day, bm = b.month * 100 + b.day;
+        return am.compareTo(bm);
+      });
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surfaceElevated,
+        border: Border.all(color: palette.border),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            const Icon(Icons.celebration, size: 18, color: AppColors.dangerRed),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('Holidays & special days',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+            ),
+          ]),
+          if (overrides.isEmpty) ...[
+            const SizedBox(height: 8),
+            Text('Add a date that overrides the normal pattern — like Christmas → always Mom.',
+                style: TextStyle(fontSize: 13, color: palette.textSecondary)),
+          ] else
+            for (final o in overrides) _overrideRow(context, o),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : () => _openOverrideEditor(),
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add a special day'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(44),
+              side: BorderSide(color: palette.border),
+              foregroundColor: palette.textPrimary,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _overrideRow(BuildContext context, LiveOverride o) {
+    final palette = context.palette;
+    final color = _fill(o.parentAssignment);
+    final dateText = (o.holidayRule != null && o.holidayRule!.isNotEmpty)
+        ? '${_months[(o.month.clamp(1, 12)) - 1]} ${o.day}${o.isAnnual ? ' · yearly' : ''}'
+        : '${_months[(o.month.clamp(1, 12)) - 1]} ${o.day}';
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: _busy ? null : () => _openOverrideEditor(existing: o),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(children: [
+          Container(
+            width: 14, height: 14,
+            decoration: BoxDecoration(
+              color: o.parentAssignment == 'None' ? Colors.transparent : color,
+              border: o.parentAssignment == 'None' ? Border.all(color: palette.border) : null,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_overrideLabel(o),
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: palette.textPrimary)),
+                Text(dateText, style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.delete_outline, size: 20, color: palette.textSecondary),
+            onPressed: _busy ? null : () => _deleteOverride(o),
+          ),
+        ]),
+      ),
+    );
+  }
+
   Widget _continueBar(BuildContext context) {
     final palette = context.palette;
     return Column(
@@ -811,8 +1104,545 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   }
 }
 
-class _DayEdit {
-  final String parent;
-  final TimeOfDay? time;
-  _DayEdit(this.parent, this.time);
+// ── Floating action menu (hamburger that opens upward) ───────────────────────────
+/// A menu button (bottom-right) that expands upward to expose the AI assistant, the
+/// template catalog, and the how-it-works guide.
+class _EditorActionMenu extends StatefulWidget {
+  const _EditorActionMenu({required this.onAi, required this.onTemplates, required this.onHelp});
+  final VoidCallback onAi;
+  final VoidCallback onTemplates;
+  final VoidCallback onHelp;
+
+  @override
+  State<_EditorActionMenu> createState() => _EditorActionMenuState();
+}
+
+class _EditorActionMenuState extends State<_EditorActionMenu> {
+  bool _open = false;
+
+  void _toggle() => setState(() => _open = !_open);
+  void _run(VoidCallback action) {
+    setState(() => _open = false);
+    action();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          alignment: Alignment.bottomRight,
+          child: _open
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _item('Templates', 'icon_calendar', const [Color(0xFF10B981), Color(0xFF059669)],
+                        () => _run(widget.onTemplates)),
+                    const SizedBox(height: 12),
+                    _item('AI Assistant', 'icon_sparkle', const [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+                        () => _run(widget.onAi)),
+                    const SizedBox(height: 12),
+                    _item('How it works', '?', const [Color(0xFF3B82F6), Color(0xFF2563EB)],
+                        () => _run(widget.onHelp)),
+                    const SizedBox(height: 16),
+                  ],
+                )
+              : const SizedBox.shrink(),
+        ),
+        GestureDetector(
+          onTap: _toggle,
+          child: Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: _open
+                      ? const [Color(0xFF6B7280), Color(0xFF4B5563)]
+                      : const [Color(0xFF3B82F6), Color(0xFF8B5CF6)]),
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(color: const Color(0xFF8B5CF6).withValues(alpha: 0.4), offset: const Offset(0, 4), blurRadius: 12),
+              ],
+            ),
+            child: Center(child: Icon(_open ? Icons.close : Icons.menu, color: Colors.white, size: 26)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _item(String label, String icon, List<Color> grad, VoidCallback onTap) {
+    final palette = context.palette;
+    return GestureDetector(
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: palette.surfaceElevated,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 8, offset: const Offset(0, 2))],
+            ),
+            child: Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: grad),
+              borderRadius: BorderRadius.circular(23),
+              boxShadow: [BoxShadow(color: grad.last.withValues(alpha: 0.4), blurRadius: 8, offset: const Offset(0, 2))],
+            ),
+            child: Center(
+              child: icon.startsWith('icon_')
+                  ? AppIcon(icon, size: 22, color: Colors.white)
+                  : Text(icon, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── How-it-works walkthrough ─────────────────────────────────────────────────────
+/// Which example illustration a guide step shows (above the title).
+enum _Vis { none, welcome, cycle, tapDay, times, special, live, conflict, menu }
+
+class _GuideStep {
+  final String icon; // 'icon_*' name, or a literal glyph like '?'
+  final Color iconBg;
+  final Color iconTint;
+  final String title;
+  final String body;
+  final String? note;
+  final _Vis visual;
+  const _GuideStep(this.icon, this.iconBg, this.iconTint, this.title, this.body,
+      {this.note, this.visual = _Vis.none});
+}
+
+class _GuideDialog extends StatefulWidget {
+  const _GuideDialog();
+
+  @override
+  State<_GuideDialog> createState() => _GuideDialogState();
+}
+
+class _GuideDialogState extends State<_GuideDialog> {
+  int _step = 0;
+
+  static const _steps = <_GuideStep>[
+    _GuideStep('?', AppColors.iconBgBlue, AppColors.primaryBlue, 'Your custody calendar',
+        "This is where you and your co-parent build your kids' schedule — together, live. We'll show you how in a few quick taps.",
+        visual: _Vis.welcome, note: 'Tap the menu button (bottom-right) → "How it works" to replay this anytime.'),
+    _GuideStep('icon_refresh', AppColors.iconBgBlue, AppColors.primaryBlue, 'What is a "cycle"?',
+        'A cycle is a pattern that repeats — like the days of the week always go Mon, Tue… then start over. You set up one or two weeks, and they repeat forever.',
+        visual: _Vis.cycle, note: 'Most families use a 1- or 2-week cycle.'),
+    _GuideStep('icon_calendar', Color(0xFFFCE7F3), Color(0xFFBE185D), 'Tap a day to set it',
+        'Tap any day, then choose who has the kids: Dad, Mom, Both, or None. The day changes colour right away.',
+        visual: _Vis.tapDay),
+    _GuideStep('icon_clock', AppColors.iconBgGreen, AppColors.successGreen, 'Set handoff times',
+        'For each day you can set when custody starts and ends — and even the handoff location — so pickup and drop-off are crystal clear.',
+        visual: _Vis.times),
+    _GuideStep('icon_gift', AppColors.iconBgRed, AppColors.dangerRed, 'Holidays & special days',
+        'Special dates can override the normal pattern. For example: Christmas → always Mom, July 4th → always Dad. Add them under "Holidays & special days".',
+        visual: _Vis.special),
+    _GuideStep('icon_handshake', AppColors.iconBgGreen, AppColors.successGreen, 'You both edit it live',
+        'There are no proposals — you share ONE schedule and edit it together in real time. When it looks right, you each tap Agree; once you BOTH agree it becomes your official schedule.',
+        visual: _Vis.live),
+    _GuideStep('icon_alert', AppColors.iconBgYellow, AppColors.warningAmber, 'Editing at the same time',
+        "When your co-parent is in the editor you'll see \"they're also here\". If they're changing a day or applying a template, it locks briefly so edits don't collide — and if you both change something, we keep the latest and let you reload.",
+        visual: _Vis.conflict),
+    _GuideStep('icon_sparkle', AppColors.iconBgPurple, AppColors.accentPurple, 'Need a hand? Use the menu',
+        'Tap the menu button (bottom-right) for the AI assistant — it can build a whole schedule for you — and ready-made Templates you can apply in one tap.',
+        visual: _Vis.menu),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final s = _steps[_step];
+    final isLast = _step == _steps.length - 1;
+    return Dialog(
+      backgroundColor: palette.surfaceElevated,
+      insetPadding: const EdgeInsets.all(16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (int i = 0; i < _steps.length; i++)
+                  Container(
+                    width: 8,
+                    height: 8,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: BoxDecoration(
+                      color: i == _step ? AppColors.primaryBlue : const Color(0xFFD1D5DB),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    _hero(context, s),
+                    const SizedBox(height: 16),
+                    Text(s.title,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                    const SizedBox(height: 8),
+                    Text(s.body,
+                        textAlign: TextAlign.center, style: TextStyle(fontSize: 15, color: palette.textSecondary)),
+                    if (s.note != null) ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: context.isDark ? const Color(0xFF1F2937) : const Color(0xFFF9FAFB),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(s.note!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic, color: palette.textSecondary)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: palette.textSecondary,
+                      side: BorderSide(color: palette.border, width: 2),
+                      minimumSize: const Size(0, 48),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                    ),
+                    onPressed: () => _step == 0 ? Navigator.of(context).pop() : setState(() => _step--),
+                    child: Text(_step == 0 ? 'Skip' : 'Back', style: const TextStyle(fontSize: 16)),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primaryBlue,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 48),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                    ),
+                    onPressed: () {
+                      if (isLast) {
+                        Navigator.of(context).pop();
+                      } else {
+                        setState(() => _step++);
+                      }
+                    },
+                    child: Text(isLast ? 'Got It!' : 'Next',
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Step illustrations ───────────────────────────────────────────────────────
+  static const _cDad = Color(0xFFBFDBFE);
+  static const _cMom = Color(0xFFFCE7F3);
+  static const _cBoth = Color(0xFFE9D5FF);
+  static const _cNone = Color(0xFFF1F5F9);
+  static const _cDadInk = Color(0xFF1E40AF);
+  static const _cMomInk = Color(0xFFBE185D);
+  static const _muted = Color(0xFF94A3B8);
+
+  Widget _hero(BuildContext context, _GuideStep s) {
+    final v = _visual(context, s.visual);
+    if (v != null) return v;
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(color: s.iconBg, borderRadius: BorderRadius.circular(16)),
+      child: Center(
+        child: s.icon.startsWith('icon_')
+            ? AppIcon(s.icon, size: 32, color: s.iconTint)
+            : Text(s.icon, style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: s.iconTint)),
+      ),
+    );
+  }
+
+  Widget? _visual(BuildContext context, _Vis v) {
+    switch (v) {
+      case _Vis.none:
+        return null;
+      case _Vis.welcome:
+        return _card(context, Column(children: [_legend(), const SizedBox(height: 12), _week('DDMMMBB')]));
+      case _Vis.cycle:
+        return _card(
+          context,
+          Column(children: [
+            _legend(),
+            const SizedBox(height: 12),
+            _week('DDMMMDD', label: 'WEEK 1'),
+            const SizedBox(height: 8),
+            _week('MMDDDMM', label: 'WEEK 2'),
+            const SizedBox(height: 10),
+            const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.refresh, size: 15, color: Color(0xFF2563EB)),
+              SizedBox(width: 6),
+              Text('then it repeats…', style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: Color(0xFF2563EB))),
+            ]),
+            const SizedBox(height: 10),
+            Opacity(opacity: 0.45, child: _week('DDMMMDD', label: 'WEEK 1 AGAIN')),
+          ]),
+        );
+      case _Vis.tapDay:
+        return _card(
+          context,
+          Column(children: [
+            _week('DDNMMBB', ring: 2),
+            const SizedBox(height: 12),
+            Wrap(spacing: 8, runSpacing: 8, alignment: WrapAlignment.center, children: [
+              _choice('Dad', _cDad, _cDadInk),
+              _choice('Mom', _cMom, _cMomInk),
+              _choice('Both', _cBoth, const Color(0xFF7E22CE)),
+              _choice('None', _cNone, _muted),
+            ]),
+          ]),
+        );
+      case _Vis.times:
+        return _card(
+          context,
+          Column(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(color: _cDad, borderRadius: BorderRadius.circular(12)),
+              child: const Text('WED · Dad has the kids',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _cDadInk)),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(color: const Color(0xFFDCFCE7), borderRadius: BorderRadius.circular(20)),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.access_time, size: 14, color: Color(0xFF16A34A)),
+                SizedBox(width: 6),
+                Text('3:00 PM  →  6:00 PM',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF16A34A))),
+              ]),
+            ),
+          ]),
+        );
+      case _Vis.special:
+        return _card(
+          context,
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            const Column(children: [
+              Text('🎄', style: TextStyle(fontSize: 28)),
+              SizedBox(height: 2),
+              Text('Dec 25', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF64748B))),
+            ]),
+            const Padding(padding: EdgeInsets.symmetric(horizontal: 14), child: Icon(Icons.arrow_forward, size: 18, color: _muted)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(color: _cMom, borderRadius: BorderRadius.circular(12)),
+              child: const Text('Always Mom', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: _cMomInk)),
+            ),
+          ]),
+        );
+      case _Vis.live:
+        return _card(
+          context,
+          Column(children: [
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              _avatar('You', const Color(0xFF3B82F6)),
+              const Padding(padding: EdgeInsets.symmetric(horizontal: 14), child: Icon(Icons.sync_alt, size: 18, color: _muted)),
+              _avatar('Co-parent', const Color(0xFFEC4899)),
+            ]),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(color: const Color(0xFFDCFCE7), borderRadius: BorderRadius.circular(20)),
+              child: const Text('Both agree → official schedule',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF16A34A))),
+            ),
+          ]),
+        );
+      case _Vis.conflict:
+        return _card(
+          context,
+          Column(children: [
+            _week('DDMMMDD', changed: {1}, conflict: {4}),
+            const SizedBox(height: 12),
+            Wrap(spacing: 14, alignment: WrapAlignment.center, children: [
+              _dot(const Color(0xFFF59E0B), 'Your change'),
+              _dot(const Color(0xFFEF4444), 'They\'re editing'),
+            ]),
+          ]),
+        );
+      case _Vis.menu:
+        return _card(
+          context,
+          Column(mainAxisSize: MainAxisSize.min, children: [
+            _menuRow('icon_calendar', 'Templates', const [Color(0xFF10B981), Color(0xFF059669)]),
+            const SizedBox(height: 8),
+            _menuRow('icon_sparkle', 'AI Assistant', const [Color(0xFF6366F1), Color(0xFF8B5CF6)]),
+            const SizedBox(height: 8),
+            _menuRow('?', 'How it works', const [Color(0xFF3B82F6), Color(0xFF2563EB)]),
+            const SizedBox(height: 10),
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6)]),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: const Center(child: Icon(Icons.menu, color: Colors.white, size: 22)),
+            ),
+          ]),
+        );
+    }
+  }
+
+  Widget _card(BuildContext context, Widget child) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
+        decoration: BoxDecoration(
+          color: context.isDark ? const Color(0xFF111827) : const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: context.isDark ? const Color(0xFF1F2937) : const Color(0xFFE2E8F0)),
+        ),
+        child: child,
+      );
+
+  Widget _legend() {
+    Widget chip(Color c, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 12, height: 12, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(3))),
+          const SizedBox(width: 5),
+          Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+        ]);
+    return Wrap(spacing: 14, runSpacing: 6, alignment: WrapAlignment.center, children: [
+      chip(_cDad, 'Dad'),
+      chip(_cMom, 'Mom'),
+      chip(_cBoth, 'Both'),
+    ]);
+  }
+
+  /// A 7-cell week. [code] is 7 chars from {D,M,B,N}. [ring] outlines one day;
+  /// [changed]/[conflict] outline days yellow/red.
+  Widget _week(String code, {String? label, int? ring, Set<int> changed = const {}, Set<int> conflict = const {}}) {
+    const dow = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    Color bg(String c) => c == 'D' ? _cDad : c == 'M' ? _cMom : c == 'B' ? _cBoth : _cNone;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      if (label != null) ...[
+        Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1, color: _muted)),
+        const SizedBox(height: 6),
+      ],
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        for (int i = 0; i < 7 && i < code.length; i++) ...[
+          Column(children: [
+            Text(dow[i], style: const TextStyle(fontSize: 9, color: _muted)),
+            const SizedBox(height: 3),
+            Container(
+              width: 26,
+              height: 30,
+              decoration: BoxDecoration(
+                color: bg(code[i]),
+                borderRadius: BorderRadius.circular(7),
+                border: ring == i
+                    ? Border.all(color: const Color(0xFF2563EB), width: 2.5)
+                    : conflict.contains(i)
+                        ? Border.all(color: const Color(0xFFEF4444), width: 2.5)
+                        : changed.contains(i)
+                            ? Border.all(color: const Color(0xFFF59E0B), width: 2.5)
+                            : null,
+              ),
+            ),
+          ]),
+          if (i < 6) const SizedBox(width: 4),
+        ],
+      ]),
+    ]);
+  }
+
+  Widget _choice(String label, Color bg, Color ink) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+        child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: ink)),
+      );
+
+  Widget _avatar(String label, Color color) => Column(children: [
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(22)),
+          child: Center(
+              child: Text(label.characters.first.toUpperCase(),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white))),
+        ),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+      ]);
+
+  Widget _dot(Color color, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          width: 14,
+          height: 14,
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(4), border: Border.all(color: color, width: 2.5)),
+        ),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+      ]);
+
+  Widget _menuRow(String icon, String label, List<Color> grad) => Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(color: const Color(0xFFFFFFFF), borderRadius: BorderRadius.circular(9), boxShadow: const [
+              BoxShadow(color: Color(0x14000000), blurRadius: 6, offset: Offset(0, 1)),
+            ]),
+            child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1F2937))),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: grad),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Center(
+              child: icon.startsWith('icon_')
+                  ? AppIcon(icon, size: 18, color: Colors.white)
+                  : Text(icon, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      );
 }
