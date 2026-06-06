@@ -6,6 +6,7 @@ import 'callkit_service.dart';
 import 'auth_service.dart';
 import 'api_client.dart';
 import 'custody_proposal_service.dart';
+import 'live_schedule_service.dart';
 import 'financial_service.dart';
 import 'location_service.dart';
 import 'messaging_service.dart';
@@ -37,6 +38,7 @@ class ServiceLocator {
   static late final ApiClient api;
   static late final AuthService auth;
   static late final CustodyProposalService custodyProposal;
+  static late final LiveScheduleService liveSchedule;
   static late final ScheduleService schedule;
   static late final FinancialService financial;
   static late final AddressSearchService addressSearch;
@@ -88,6 +90,7 @@ class ServiceLocator {
     financial = FinancialService(api);
     addressSearch = AddressSearchService(api);
     webSocket = WebSocketService(api);
+    liveSchedule = LiveScheduleService(api, webSocket);
     messaging = MessagingService(api, webSocket);
     messageEncryption = MessageEncryptionService(messaging);
     notifications = NotificationService(api, secureStorage);

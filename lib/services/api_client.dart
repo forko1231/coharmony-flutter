@@ -317,4 +317,31 @@ class ApiClient {
       return null;
     }
   }
+
+  /// Like the JSON helpers, but surfaces the HTTP status alongside the decoded body so
+  /// callers can act on it. The live-schedule editor needs this: 409 = version conflict,
+  /// 423 = locked, 200 = applied — the status IS the signal. Honors 401-refresh; the live
+  /// endpoints are paywall-exempt so the subscription redirect isn't triggered here.
+  Future<({int status, dynamic body})> sendForResult(
+      String method, String endpoint, Object? body) async {
+    try {
+      await _ensureAuthToken();
+      final jsonContent = body == null ? null : jsonEncode(body);
+      Future<http.Response> send() {
+        final request = http.Request(method, _uri(endpoint))
+          ..headers.addAll(_headers(json: jsonContent != null));
+        if (jsonContent != null) request.body = jsonContent;
+        return _http.send(request).then(http.Response.fromStream).timeout(timeout);
+      }
+
+      var response = await send();
+      if (response.statusCode == 401 && await _handleAuthFailure()) {
+        response = await send();
+      }
+      final decoded = response.body.isEmpty ? null : _decode(response.body);
+      return (status: response.statusCode, body: decoded);
+    } catch (_) {
+      return (status: 0, body: null);
+    }
+  }
 }
