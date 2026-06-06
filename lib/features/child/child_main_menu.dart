@@ -8,6 +8,7 @@ import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
 import '../../widgets/app_icon.dart';
+import '../calling/call_permissions_primer.dart';
 import '../messaging/chat_interface_page.dart';
 import 'child_family_page.dart';
 import 'child_settings_page.dart';
@@ -49,6 +50,11 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
     ServiceLocator.callKit.registerVoipToken(); // iOS VoIP token register (no-op on Android)
     ServiceLocator.messaging.onMessageReceived.listen((_) {
       if (mounted) _loadMessages();
+    });
+    // Prime calling permissions (mic + Android notification/full-screen) so the
+    // child can receive a parent's call. One-time; gated inside.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) maybeShowCallPermissionsPrimer(context);
     });
   }
 

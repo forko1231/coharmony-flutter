@@ -1,11 +1,16 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../services/preferences.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
 
-const _shownKey = 'call_perms_primer_shown';
+// v2: re-prompt existing users so Android gets the notification / full-screen
+// permissions the original mic-only primer never asked for.
+const _shownKey = 'call_perms_primer_shown_v2';
 
 /// One-time calling-permissions primer, shown the first time the user reaches the
 /// app after finishing onboarding (i.e. post-subscription).
@@ -19,9 +24,15 @@ Future<void> maybeShowCallPermissionsPrimer(BuildContext context) async {
   if (Preferences.getBool(_shownKey)) return;
   if (!Preferences.getBool('calling_enabled', true)) return;
 
-  // If the mic is already granted there's nothing to prime; mark done and move on.
-  final mic = await Permission.microphone.status;
-  if (mic.isGranted) {
+  final micGranted = await Permission.microphone.isGranted;
+  // Android shows the incoming-call UI as a full-screen NOTIFICATION, so the
+  // notification permission is as load-bearing as the mic — without it, calls
+  // silently never appear. (iOS uses native CallKit and needs neither.)
+  final notifGranted =
+      Platform.isAndroid ? await Permission.notification.isGranted : true;
+
+  // Nothing left to ask for → mark done and move on.
+  if (micGranted && notifGranted) {
     await Preferences.setBool(_shownKey, true);
     return;
   }
@@ -41,6 +52,20 @@ Future<void> maybeShowCallPermissionsPrimer(BuildContext context) async {
   // Trigger the system prompts. Mic covers every call; camera covers video.
   await Permission.microphone.request();
   await Permission.camera.request();
+
+  // Android-only: POST_NOTIFICATIONS (13+) lets us post the incoming-call ring;
+  // USE_FULL_SCREEN_INTENT (14+) lets it take over the lock screen instead of a
+  // banner. Both default to NOT granted on modern Android, so request them here
+  // or the recipient never sees the call.
+  if (Platform.isAndroid) {
+    await Permission.notification.request();
+    try {
+      final canFullScreen = await FlutterCallkitIncoming.canUseFullScreenIntent();
+      if (canFullScreen == false) {
+        await FlutterCallkitIncoming.requestFullIntentPermission();
+      }
+    } catch (_) {/* best-effort — older Android auto-grants */}
+  }
 }
 
 class _CallPermissionsDialog extends StatelessWidget {
@@ -78,8 +103,9 @@ class _CallPermissionsDialog extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               'CoHarmony lets you make and receive voice and video calls with your '
-              'co-parent. To answer a call — even when your phone is locked — we need '
-              'access to your microphone and camera.\n\nWe\'ll never use them outside a call.',
+              'co-parent. So we can ring you when a call comes in — even when your phone '
+              'is locked — we need your microphone, camera, and notification access.'
+              '\n\nWe\'ll never use them outside a call.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, height: 1.4, color: palette.textSecondary),
             ),
