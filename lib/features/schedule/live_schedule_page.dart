@@ -153,7 +153,13 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     if (!mounted) return;
     switch (r.op) {
       case LiveOp.ok:
+        final wasAgreed = _data?.isAgreed ?? false;
         setState(() => _data = r.data);
+        // If my edit reopened a schedule you'd both agreed to, say so — otherwise the
+        // Agree button silently reappearing is confusing.
+        if (wasAgreed && !(r.data?.isAgreed ?? false)) {
+          _toast("Your change reopened the schedule — you'll both need to Agree again.");
+        }
         break;
       case LiveOp.conflict:
         _toast('Your co-parent just changed this — reloaded.');
@@ -292,7 +298,11 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       return;
     }
     if (!mounted) return;
+    // Keep the day-lock alive while the sheet is open (TTL is 45s; re-acquiring extends it)
+    // so a long edit — picking a location, typing an address — never drops the live lock.
+    final beat = Timer.periodic(const Duration(seconds: 30), (_) => _svc.acquireDayLock(weekIndex, dayIndex));
     await _openDayEditor(weekIndex, dayIndex);
+    beat.cancel();
     await _svc.releaseDayLock(weekIndex, dayIndex);
     await _refresh();
   }
