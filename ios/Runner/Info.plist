@@ -108,5 +108,9 @@
 			</array>
 		</dict>
 	</array>
+	<!-- google_sign_in (iOS) requires the forward iOS OAuth client id here, or the
+	     SDK crashes when signIn() is called. Matches the reversed URL scheme above. -->
+	<key>GIDClientID</key>
+	<string>877762151190-rhcr7cmbt7isvvq06esdclc4jca9i2de.apps.googleusercontent.com</string>
 </dict>
 </plist>

@@ -2,12 +2,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../../navigation/app_navigator.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
-import '../../theme/app_palette.dart';
 
 /// The Web / "server" OAuth client ID from Google Cloud Console → Credentials.
 /// Passed to Google as the server client id so the returned ID token's audience
@@ -110,58 +110,65 @@ class _SsoButtonsState extends State<SsoButtons> {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    // Official, full-width branded buttons stacked — the look users recognise.
+    return Column(
       children: [
         // Apple is only shown on iOS (Android uses a clunky web flow + Google covers it).
         if (Platform.isIOS) ...[
-          Expanded(
-            child: _SsoButton(
-              label: 'Apple',
-              icon: Icons.apple,
-              onTap: _busy ? null : _signInWithApple,
-            ),
+          SignInWithAppleButton(
+            onPressed: _busy ? () {} : _signInWithApple,
+            style: SignInWithAppleButtonStyle.black,
+            height: 52,
+            borderRadius: BorderRadius.circular(14),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(height: 12),
         ],
-        Expanded(
-          child: _SsoButton(
-            label: 'Google',
-            icon: Icons.g_mobiledata,
-            onTap: _busy ? null : _signInWithGoogle,
-          ),
-        ),
+        _GoogleButton(onTap: _busy ? null : _signInWithGoogle),
       ],
     );
   }
 }
 
-class _SsoButton extends StatelessWidget {
-  final String label;
-  final IconData icon;
+/// Google's branded sign-in button per their guidelines: white surface, neutral
+/// border, the multi-colour "G" mark, and Roboto-weight label in Google grey.
+class _GoogleButton extends StatelessWidget {
   final VoidCallback? onTap;
 
-  const _SsoButton({required this.label, required this.icon, this.onTap});
+  const _GoogleButton({this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.palette;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 52,
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: DecoratedBox(
         decoration: BoxDecoration(
-          color: palette.surfaceElevated,
+          color: Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: palette.border, width: 1.5),
+          border: Border.all(color: const Color(0xFFDADCE0), width: 1.5),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 24, color: palette.textPrimary),
-            const SizedBox(width: 6),
-            Text(label,
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: palette.textPrimary)),
-          ],
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SvgPicture.asset('assets/images/google_g.svg', width: 20, height: 20),
+                const SizedBox(width: 12),
+                const Text(
+                  'Sign in with Google',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF3C4043),
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
