@@ -195,25 +195,44 @@ class _AiChatPageState extends State<AiChatPage> {
       ];
       final lock = await live.acquireLock('ai');
       if (lock.op != LiveOp.ok) {
-        _addAi('Your co-parent is editing the schedule right now — give it a moment and try again.');
-        setState(() => item.busy = false);
+        _addAi(_liveMsg(lock.op));
+        if (mounted) setState(() => item.busy = false);
         return;
       }
-      final res = await live.applyBulk('ai', item.args.patternLengthWeeks, days, const []);
-      await live.releaseLock();
-      if (res.ok) {
-        _remove(item);
-        AnalyticsService.trackCustom('ai_pattern_applied_live');
-        _addAi("✅ Added to your live schedule. Open the Schedule editor to review it — when you're happy, tap Agree.");
-      } else {
-        _addAi("I couldn't apply that — your co-parent may have just changed the schedule. Please try again.");
-        setState(() => item.busy = false);
+      // Hold the lock across the apply; ALWAYS release it, even if the apply throws.
+      try {
+        final res = await live.applyBulk('ai', item.args.patternLengthWeeks, days, const []);
+        if (!mounted) return;
+        if (res.ok) {
+          _remove(item);
+          AnalyticsService.trackCustom('ai_pattern_applied_live');
+          _addAi("✅ Added to your live schedule. Open the Schedule editor to review it — when you're happy, tap Agree.");
+        } else {
+          _addAi(_liveMsg(res.op));
+          setState(() => item.busy = false);
+        }
+      } finally {
+        await live.releaseLock();
       }
     } catch (_) {
-      _addAi('Something went wrong while applying the pattern. Please try the Schedule editor.');
+      _addAi('Something went wrong while applying the pattern. Please try again, or use the Schedule editor.');
       if (mounted) setState(() => item.busy = false);
     }
   }
+
+  // One place mapping every live-schedule outcome to a clear, user-facing line.
+  String _liveMsg(LiveOp op) => switch (op) {
+        LiveOp.locked =>
+          "Your co-parent is editing the whole schedule right now — give it a moment and try again.",
+        LiveOp.lockedDay =>
+          "Your co-parent is editing one of the days right now — give it a moment and try again.",
+        LiveOp.conflict =>
+          "Your co-parent just changed the schedule. Tap to apply again and I'll build on the latest version.",
+        LiveOp.noPartner =>
+          "Link your co-parent first, then I can set up your shared schedule.",
+        LiveOp.error || LiveOp.ok =>
+          "I couldn't apply that just now. Please try again, or use the Schedule editor.",
+      };
 
   // Add an AI-suggested override (holiday / special day) to the LIVE schedule.
   Future<void> _applyOverride(_OverrideItem item) async {
@@ -250,15 +269,12 @@ class _AiChatPageState extends State<AiChatPage> {
       if (res.ok) {
         _remove(item);
         _addAi('✅ Added ${o.label} to your live schedule.');
-      } else if (res.op == LiveOp.locked) {
-        _addAi('Your co-parent is editing the schedule right now — try again in a moment.');
-        setState(() => item.busy = false);
       } else {
-        _addAi("I couldn't add that — the schedule may have just changed. Please try again.");
+        _addAi(_liveMsg(res.op));
         setState(() => item.busy = false);
       }
     } catch (_) {
-      _addAi('Something went wrong. Please try the Schedule editor.');
+      _addAi('Something went wrong. Please try again, or use the Schedule editor.');
       if (mounted) setState(() => item.busy = false);
     }
   }
