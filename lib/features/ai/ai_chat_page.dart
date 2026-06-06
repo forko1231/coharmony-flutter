@@ -4,10 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/ai_models.dart';
 import '../../models/custody_models.dart';
-import '../../navigation/app_navigator.dart';
 import '../../services/analytics_service.dart';
-import '../../services/custody_templates/pending_template_service.dart';
 import '../../services/custody_templates/template_registry.dart';
+import '../../services/live_schedule_service.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
@@ -173,99 +172,64 @@ class _AiChatPageState extends State<AiChatPage> {
   }
 
   // ── Tool-call actions ─────────────────────────────────────────────────────────
-  Future<void> _openPatternInEditor(_PatternItem item) async {
-    final days = [
-      for (final d in item.args.days)
-        RawPatternDay(
-          weekIndex: d.weekIndex,
-          dayIndex: d.dayIndex,
-          parentAssignment: d.parentAssignment,
-          transferTime: d.transferTime,
-          transferEndTime: d.transferEndTime,
-          locationName: d.locationName,
-          locationAddress: d.locationAddress,
-          latitude: d.latitude,
-          longitude: d.longitude,
-        ),
-    ];
-    PendingTemplateService.setRawPattern(item.args.patternLengthWeeks, days);
-    AnalyticsService.trackCustom('onboarding_ai_pattern_opened_in_editor');
-    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CustodySchedulePage()));
-  }
-
+  // Apply an AI-generated weekly pattern to the LIVE schedule (replaces the recurring
+  // pattern). Takes the schedule-wide lock so the co-parent can't edit mid-apply, then
+  // bulk-applies + releases. No proposals — one shared live schedule.
   Future<void> _applyPattern(_PatternItem item) async {
     setState(() => item.busy = true);
     try {
-      final svc = ServiceLocator.custodyProposal;
-      final proposal = await svc.createNewProposal(item.args.patternLengthWeeks);
-      if (proposal == null) {
-        _addAi('Failed to create the schedule proposal. Please try again or use the Schedule tab.');
-        setState(() => item.busy = false);
-        return;
-      }
-      final dayUpdates = [
+      final live = ServiceLocator.liveSchedule;
+      final days = [
         for (final d in item.args.days)
-          UpdateDayRequest(
+          LiveDay(
             weekIndex: d.weekIndex,
             dayIndex: d.dayIndex,
             parentAssignment: d.parentAssignment,
             transferTime: d.transferTime,
             transferEndTime: d.transferEndTime,
-            locationName: d.locationName,
-            locationAddress: d.locationAddress,
-            latitude: d.latitude,
-            longitude: d.longitude,
+            transferLocationName: d.locationName,
+            transferAddress: d.locationAddress,
+            transferLatitude: d.latitude,
+            transferLongitude: d.longitude,
           ),
       ];
-      final ok = await svc.updateDays(proposal.proposalId, dayUpdates);
-      if (!ok) {
-        _addAi('Failed to apply the day assignments. Please try from the Schedule tab.');
+      final lock = await live.acquireLock('ai');
+      if (lock.op != LiveOp.ok) {
+        _addAi('Your co-parent is editing the schedule right now — give it a moment and try again.');
         setState(() => item.busy = false);
         return;
       }
-      final submit = await svc.submitProposal(proposal.proposalId);
-      if (submit?.success == true) {
+      final res = await live.applyBulk('ai', item.args.patternLengthWeeks, days, const []);
+      await live.releaseLock();
+      if (res.ok) {
         _remove(item);
-        if (PendingTemplateService.isOnboardingMode) {
-          AnalyticsService.trackCustom('onboarding_ai_pattern_applied');
-          PendingTemplateService.clear();
-          if (mounted) await advanceOnboarding(context);
-        } else {
-          _addAi('✅ Schedule proposal created and submitted! Your co-parent will be notified to review it.');
-          setState(() => _items.add(_ViewScheduleItem()));
-        }
+        AnalyticsService.trackCustom('ai_pattern_applied_live');
+        _addAi("✅ Added to your live schedule. Open the Schedule editor to review it — when you're happy, tap Agree.");
       } else {
-        _addAi("The pattern was saved but I couldn't submit it. You can submit it from the Schedule tab.");
+        _addAi("I couldn't apply that — your co-parent may have just changed the schedule. Please try again.");
         setState(() => item.busy = false);
       }
     } catch (_) {
-      _addAi('Something went wrong while applying the pattern. Please try from the Schedule tab.');
+      _addAi('Something went wrong while applying the pattern. Please try the Schedule editor.');
       if (mounted) setState(() => item.busy = false);
     }
   }
 
+  // Add an AI-suggested override (holiday / special day) to the LIVE schedule.
   Future<void> _applyOverride(_OverrideItem item) async {
     final o = item.args;
     setState(() => item.busy = true);
     try {
-      final svc = ServiceLocator.custodyProposal;
-      final active = await svc.getActiveProposal();
-      int proposalId;
-      if (active?.hasActiveProposal == true && active?.proposal != null) {
-        proposalId = active!.proposal!.proposalId;
-      } else {
-        final approved = await svc.getApprovedSchedule();
-        final newProposal = await svc.createNewProposal(approved?.patternLength ?? 1);
-        if (newProposal == null) {
-          _addAi('Failed to create a proposal for the override day. Please try from the Schedule tab.');
-          setState(() => item.busy = false);
-          return;
-        }
-        proposalId = newProposal.proposalId;
+      final live = ServiceLocator.liveSchedule;
+      final cur = await live.get();
+      if (!cur.ok || cur.data == null) {
+        _addAi("I couldn't load your schedule to add that. Open the Schedule editor and try there.");
+        setState(() => item.busy = false);
+        return;
       }
-      final ok = await svc.addOrUpdateOverride(
-        proposalId,
-        UpdateOverrideRequest(
+      final res = await live.upsertOverride(
+        cur.data!.version,
+        LiveOverride(
           dateKey: (o.holidayRule?.isNotEmpty ?? false) ? '01-01' : '${_pad(o.month)}-${_pad(o.day)}',
           month: o.month,
           day: o.day,
@@ -277,21 +241,24 @@ class _AiChatPageState extends State<AiChatPage> {
           holidayRule: o.holidayRule,
           alternationMode: o.alternationMode ?? 'fixed',
           alternationStartParent: o.alternationStartParent,
-          locationName: o.locationName,
-          locationAddress: o.locationAddress,
-          latitude: o.latitude,
-          longitude: o.longitude,
+          transferLocationName: o.locationName,
+          transferAddress: o.locationAddress,
+          transferLatitude: o.latitude,
+          transferLongitude: o.longitude,
         ),
       );
-      if (ok) {
+      if (res.ok) {
         _remove(item);
-        _addAi("✅ ${o.label} override added! Submit the proposal from the Schedule tab when you're ready.");
+        _addAi('✅ Added ${o.label} to your live schedule.');
+      } else if (res.op == LiveOp.locked) {
+        _addAi('Your co-parent is editing the schedule right now — try again in a moment.');
+        setState(() => item.busy = false);
       } else {
-        _addAi('Failed to add the override day. Please try from the Schedule tab.');
+        _addAi("I couldn't add that — the schedule may have just changed. Please try again.");
         setState(() => item.busy = false);
       }
     } catch (_) {
-      _addAi('Something went wrong. Please try from the Schedule tab.');
+      _addAi('Something went wrong. Please try the Schedule editor.');
       if (mounted) setState(() => item.busy = false);
     }
   }
@@ -621,7 +588,6 @@ class _AiChatPageState extends State<AiChatPage> {
   Widget _patternCard(BuildContext context, _PatternItem item) {
     final palette = context.palette;
     final p = item.args;
-    final onboarding = PendingTemplateService.isOnboardingMode;
     return _cardShell(context, AppColors.primaryBlue, opacity: item.busy ? 0.6 : 1, [
       _cardHeader(context, 'icon_calendar', AppColors.primaryBlue, 'Schedule Preview'),
       const SizedBox(height: 4),
@@ -648,9 +614,9 @@ class _AiChatPageState extends State<AiChatPage> {
           _remove(item);
           _addAi("No problem! Let me know if you'd like a different pattern.");
         },
-        onboarding ? 'Open in Editor' : 'Accept',
+        'Add to schedule',
         AppColors.successGreen,
-        item.busy ? () {} : () => onboarding ? _openPatternInEditor(item) : _applyPattern(item),
+        item.busy ? () {} : () => _applyPattern(item),
       ),
     ]);
   }

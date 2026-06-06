@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../navigation/app_navigator.dart';
+import '../../services/custody_templates/pending_template_service.dart';
 import '../../services/live_schedule_service.dart';
 import '../../services/onboarding_state.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
+import 'templates/template_catalog_page.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
 
@@ -41,6 +43,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   bool _loading = true;
   bool _noPartner = false;
   bool _busy = false; // a mutating call is in flight
+  bool _introShown = false; // onboarding one-shot "co-parent already started" intro
 
   StreamSubscription<int>? _wsSub;
   Timer? _poll;
@@ -81,6 +84,13 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       _noPartner = r.op == LiveOp.noPartner;
       if (r.data != null) _data = r.data;
     });
+    // Second-parent onboarding: if the co-parent already built + agreed a schedule,
+    // show a one-shot "review it" intro before they edit/Continue.
+    final d = _data;
+    if (widget.isOnboarding && !_introShown && d != null && d.days.isNotEmpty && _partnerAgreed(d)) {
+      _introShown = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showReviewIntro());
+    }
   }
 
   // Silent refresh used by the WS ping / poll — don't flicker the spinner, and don't
@@ -147,6 +157,52 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     await _svc.releaseLock();
     if (mounted) setState(() => _busy = false);
     await _applyResult(res);
+  }
+
+  // Start-from-a-template: holds the schedule-wide lock for the whole pick-and-apply
+  // (the co-parent sees the "applying a template" overlay and can't edit), heartbeating
+  // it while the catalog is open, then bulk-applies the generated pattern + releases.
+  Future<void> _useTemplate() async {
+    if (_busy) return;
+    final lock = await _svc.acquireLock('template');
+    if (lock.op != LiveOp.ok) {
+      await _applyResult(lock);
+      return;
+    }
+    setState(() => _busy = true);
+    final hb = Timer.periodic(const Duration(seconds: 25), (_) => _svc.heartbeatLock());
+    PendingTemplateService.clear();
+    PendingTemplateService.isOnboardingMode = false; // hand the result back to us, don't make a proposal
+    if (!mounted) {
+      hb.cancel();
+      await _svc.releaseLock();
+      return;
+    }
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TemplateCatalogPage()));
+    hb.cancel();
+
+    final picked = PendingTemplateService.tryConsume();
+    if (picked == null) {
+      await _svc.releaseLock(); // user backed out
+      if (mounted) setState(() => _busy = false);
+      await _refresh();
+      return;
+    }
+    final gen = picked.template.buildPattern(picked.answers);
+    final days = [
+      for (final d in gen)
+        LiveDay(
+          weekIndex: d.weekIndex,
+          dayIndex: d.dayIndex,
+          parentAssignment: d.parentAssignment,
+          transferTime: d.transferTime,
+          transferEndTime: d.transferEndTime,
+        ),
+    ];
+    final apply = await _svc.applyBulk('template', picked.template.patternLengthWeeks, days, const []);
+    await _svc.releaseLock();
+    if (mounted) setState(() => _busy = false);
+    await _applyResult(apply);
   }
 
   Future<void> _tapDay(int weekIndex, int dayIndex) async {
@@ -316,12 +372,48 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     await _applyResult(res);
   }
 
-  // Onboarding only: continue WITHOUT requiring agreement. The first parent builds the
-  // schedule and proceeds — the co-parent may not have joined yet; they agree later, in
-  // the main-app editor. One-shot acknowledgement gates the onboarding step.
-  void _continue() {
+  // Onboarding: Continue = THIS parent agrees, then proceed. The co-parent may not have
+  // joined yet — that's fine; they agree later. If the co-parent already agreed and the
+  // schedule is unchanged, this makes it mutually agreed; if this parent edited, the
+  // co-parent's prior agreement was already cleared server-side and they'll re-agree.
+  Future<void> _continue() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    await _svc.agree(); // best-effort; we proceed regardless of network result
     OnboardingState.scheduleAcknowledged = true;
-    advanceOnboarding(context);
+    if (mounted) advanceOnboarding(context);
+  }
+
+  bool _partnerAgreed(LiveScheduleData d) {
+    final a = d.agreedByA?.toLowerCase();
+    final b = d.agreedByB?.toLowerCase();
+    return (a != null && a != _me) || (b != null && b != _me);
+  }
+
+  Future<void> _showReviewIntro() async {
+    if (!mounted) return;
+    final palette = context.palette;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: palette.surfaceElevated,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Your co-parent started a schedule'),
+        content: Text(
+          'Your co-parent already set up a custody schedule. Review it below — you can '
+          'make any changes you need. When you tap Continue you agree to it; if you edit '
+          'anything, they\'ll be asked to re-confirm.',
+          style: TextStyle(fontSize: 14, height: 1.4, color: palette.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Review schedule'),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
@@ -390,6 +482,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
                     const SizedBox(height: 12),
                     _legend(context),
                     const SizedBox(height: 12),
+                    _templateCta(context),
                     for (int w = 0; w < d.patternLength; w++) ...[
                       _weekCard(context, d, w),
                       const SizedBox(height: 12),
@@ -479,6 +572,24 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
           ),
         ),
       ]),
+    );
+  }
+
+  Widget _templateCta(BuildContext context) {
+    final palette = context.palette;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: OutlinedButton.icon(
+        onPressed: _busy ? null : _useTemplate,
+        icon: const Icon(Icons.dashboard_customize, size: 18),
+        label: const Text('Start from a template'),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size.fromHeight(48),
+          side: BorderSide(color: palette.border),
+          foregroundColor: palette.textPrimary,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+      ),
     );
   }
 
