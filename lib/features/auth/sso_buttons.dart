@@ -30,6 +30,7 @@ class SsoButtons extends StatefulWidget {
 
 class _SsoButtonsState extends State<SsoButtons> {
   bool _busy = false;
+  bool _loadingOpen = false;
 
   Future<void> _signInWithGoogle() async {
     if (_busy) return;
@@ -44,8 +45,11 @@ class _SsoButtonsState extends State<SsoButtons> {
       await gsi.signOut(); // always show the account picker
       final account = await gsi.signIn();
       if (account == null) return; // user cancelled
+      if (!mounted) return;
+      _showLoading(); // account picked — cover the token-exchange + routing gap
       final idToken = (await account.authentication).idToken;
       if (idToken == null || idToken.isEmpty) {
+        _hideLoading();
         _toast('Google sign-in failed (no token).');
         return;
       }
@@ -56,11 +60,14 @@ class _SsoButtonsState extends State<SsoButtons> {
         // re-auth anyway). No checkbox; logout still force-clears this.
         await Preferences.setBool('RememberMe', true);
         await Preferences.setString('email', account.email);
+        // routeAfterAuth replaces the whole stack, which dismisses the overlay.
         if (mounted) await routeAfterAuth(context);
       } else {
+        _hideLoading();
         _toast('Could not sign in with Google. Please try again.');
       }
     } catch (_) {
+      _hideLoading();
       _toast('Google sign-in error. Please try again.');
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -74,8 +81,11 @@ class _SsoButtonsState extends State<SsoButtons> {
       final cred = await SignInWithApple.getAppleIDCredential(
         scopes: const [AppleIDAuthorizationScopes.email, AppleIDAuthorizationScopes.fullName],
       );
+      if (!mounted) return;
+      _showLoading(); // sheet closed — cover the token-exchange + routing gap
       final idToken = cred.identityToken;
       if (idToken == null || idToken.isEmpty) {
+        _hideLoading();
         _toast('Apple sign-in failed (no token).');
         return;
       }
@@ -90,13 +100,17 @@ class _SsoButtonsState extends State<SsoButtons> {
         // Keep me signed in (see Google handler). The relay-email gate (if any) is
         // handled by the post-auth router via the server record — not touched here.
         await Preferences.setBool('RememberMe', true);
+        // routeAfterAuth replaces the whole stack, which dismisses the overlay.
         if (mounted) await routeAfterAuth(context);
       } else {
+        _hideLoading();
         _toast('Could not sign in with Apple. Please try again.');
       }
     } on SignInWithAppleAuthorizationException catch (e) {
+      _hideLoading();
       if (e.code != AuthorizationErrorCode.canceled) _toast('Apple sign-in error.');
     } catch (_) {
+      _hideLoading();
       _toast('Apple sign-in error. Please try again.');
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -106,6 +120,29 @@ class _SsoButtonsState extends State<SsoButtons> {
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// Full-screen blocking spinner shown once the provider sheet closes, covering the
+  /// gap while we exchange the token and resolve the post-auth route (getUserInfo +
+  /// subscription). Without it the landing screen just sits there with no feedback.
+  void _showLoading() {
+    if (_loadingOpen || !mounted) return;
+    _loadingOpen = true;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black45,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: Center(child: CircularProgressIndicator()),
+      ),
+    );
+  }
+
+  void _hideLoading() {
+    if (!_loadingOpen || !mounted) return;
+    _loadingOpen = false;
+    Navigator.of(context, rootNavigator: true).pop();
   }
 
   @override
