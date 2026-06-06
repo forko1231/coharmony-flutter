@@ -38,9 +38,15 @@ class WebSocketService {
       StreamController<IncomingCallEvent>.broadcast();
   final StreamController<CallStateEvent> _callState =
       StreamController<CallStateEvent>.broadcast();
+  final StreamController<int> _liveSchedule =
+      StreamController<int>.broadcast();
 
   /// Stream of inbound `new_message` / `messages_read` / `typing` messages.
   Stream<WebSocketMessage> get messages => _messages.stream;
+
+  /// Fires when the partner changes the live custody schedule (emits the new
+  /// version). The live editor refetches on this for live updates / lock visuals.
+  Stream<int> get onLiveScheduleChanged => _liveSchedule.stream;
 
   /// Fires when the server pushes a `call_incoming` notification.
   Stream<IncomingCallEvent> get onCallIncoming => _callIncoming.stream;
@@ -147,6 +153,11 @@ class WebSocketService {
           // ignore: avoid_print
           print('[CALL] WS<- $type $rawData');
           _callState.add(CallStateEvent.fromJson(type, rawData));
+          break;
+        case 'live_schedule':
+          // version is sent flat on the frame (SendNotificationToUserAsync serializes
+          // the object directly), not nested under 'data'.
+          _liveSchedule.add((decoded['version'] as num?)?.toInt() ?? 0);
           break;
         default:
           break;
