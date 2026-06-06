@@ -14,7 +14,7 @@ import '../../theme/app_palette.dart';
 import '../../widgets/app_icon.dart';
 import '../messaging/chat_interface_page.dart';
 import '../onboarding/proposal_preview_grid.dart';
-import '../schedule/custody_schedule_page.dart';
+import '../schedule/live_schedule_page.dart';
 import '../schedule/templates/template_config_page.dart';
 
 /// Port of `Views/AI/AiChatPage.xaml(.cs)` — the CoHarmony AI assistant chat. Welcome
@@ -808,7 +808,7 @@ class _AiChatPageState extends State<AiChatPage> {
     return Align(
       alignment: Alignment.centerLeft,
       child: GestureDetector(
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CustodySchedulePage())),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LiveSchedulePage())),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(

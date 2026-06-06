@@ -19,7 +19,7 @@ import '../ai/ai_chat_page.dart';
 import '../calling/call_permissions_primer.dart';
 import '../filevault/file_vault_page.dart';
 import '../messaging/chat_interface_page.dart';
-import '../schedule/custody_schedule_page.dart';
+import '../schedule/live_schedule_page.dart';
 import '../schedule/date_data_page.dart';
 import '../shell/app_shell.dart';
 import '../subscription/subscription_page.dart';
@@ -126,7 +126,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
       AnalyticsService.trackCustom('post_join_schedule_prompt_accepted');
       PendingTemplateService.clear();
       if (!mounted) return;
-      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CustodySchedulePage()));
+      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LiveSchedulePage()));
       if (mounted) _load();
     } else {
       AnalyticsService.trackCustom('post_join_schedule_prompt_dismissed');

@@ -10,7 +10,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/skeleton.dart';
-import 'custody_schedule_page.dart';
+import 'live_schedule_page.dart';
 import 'date_data_page.dart';
 
 /// Schedule tab — port of `Views/Schedule/Scedule.xaml(.cs)` + `MonthItem.cs`. A month
@@ -808,7 +808,7 @@ class _SchedulePageState extends State<SchedulePage> {
     // Main-app entry into the editor must NOT be onboarding mode (the flag is a global
     // static that onboarding may have left set).
     PendingTemplateService.isOnboardingMode = false;
-    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CustodySchedulePage()));
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LiveSchedulePage()));
     if (mounted) _load(); // refresh after returning (proposal may have changed)
   }
 }
