@@ -22,7 +22,7 @@ class ApiClient {
   ApiClient({
     required this.tokenService,
     http.Client? httpClient,
-    this.baseUrl = 'https://api.ez-split.com',
+    this.baseUrl = 'https://api.co-harmony.com',
     this.clientPlatform = 'Flutter',
     this.clientVersion = '1.0.0',
     this.timeout = const Duration(seconds: 30),
