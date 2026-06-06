@@ -39,6 +39,30 @@ class AuthService {
     }
   }
 
+  /// Exchanges a Google ID token for our app session. The backend find-or-creates
+  /// the account and issues our JWT directly (no email-code MFA — Google already
+  /// authenticated). Stores the same tokens as a normal login.
+  Future<bool> signInWithGoogle(String idToken) async {
+    try {
+      final json = await _api.postJson('api/auth/google', {'idToken': idToken});
+      if (json is Map<String, dynamic>) {
+        final tokenResponse = TokenResponse.fromJson(json);
+        if (tokenResponse.token != null && tokenResponse.token!.isNotEmpty) {
+          await _tokenService.setToken(
+            tokenResponse.token!,
+            DateTime.now().toUtc().add(Duration(minutes: tokenResponse.expiresInMinutes)),
+            tokenResponse.refreshToken,
+          );
+          _api.setAuthToken(tokenResponse.token);
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Attempts to restore a session from stored tokens.
   Future<bool> tryRestoreSession() async {
     try {

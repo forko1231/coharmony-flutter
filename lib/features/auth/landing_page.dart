@@ -5,6 +5,7 @@ import '../../theme/app_palette.dart';
 import '../../widgets/app_icon.dart';
 import 'account_creation_page.dart';
 import 'login_page.dart';
+import 'sso_buttons.dart';
 
 /// Landing / welcome screen — faithful port of `Views/Login/MainPage.xaml`.
 /// Hero (logo + welcome card with three feature rows) over a pinned bottom
@@ -133,6 +134,21 @@ class LandingPage extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // One-tap SSO (find-or-create, so no need to pick login vs signup)
+                const SsoButtons(),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(child: Divider(color: palette.border)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Text('or',
+                          style: TextStyle(color: palette.textSecondary, fontSize: 13)),
+                    ),
+                    Expanded(child: Divider(color: palette.border)),
+                  ],
+                ),
+                const SizedBox(height: 18),
                 // Sign In (gradient)
                 GestureDetector(
                   onTap: () {

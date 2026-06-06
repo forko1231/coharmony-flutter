@@ -41,6 +41,7 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   crypto: ^3.0.6
   shared_preferences: ^2.3.2
+  google_sign_in: ^6.2.2
   web_socket_channel: ^3.0.1
   # AES-256-GCM for the message encrypt/decrypt wire layer (crypto only hashes).
   cryptography: ^2.7.0
