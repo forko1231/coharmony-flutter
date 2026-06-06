@@ -36,7 +36,9 @@ class _SsoButtonsState extends State<SsoButtons> {
     setState(() => _busy = true);
     try {
       final gsi = GoogleSignIn(
-        scopes: const ['email'],
+        // 'profile' makes Google put given_name/family_name in the ID token so the
+        // backend can populate the user's name (without it, names come back blank).
+        scopes: const ['email', 'profile'],
         serverClientId: kGoogleServerClientId.isEmpty ? null : kGoogleServerClientId,
       );
       await gsi.signOut(); // always show the account picker
