@@ -187,8 +187,8 @@ class _MainMenuPageState extends State<MainMenuPage> {
 
   Future<void> _loadCustody() async {
     try {
-      _approved = await ServiceLocator.custodyProposal.getApprovedSchedule();
-      _activeProposal = await ServiceLocator.custodyProposal.getActiveProposal();
+      _approved = await ServiceLocator.liveSchedule.getApprovedSchedule();
+      _activeProposal = await ServiceLocator.liveSchedule.getActiveProposal();
     } catch (_) {}
   }
 

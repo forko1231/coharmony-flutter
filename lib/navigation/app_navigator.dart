@@ -4,9 +4,6 @@ import '../features/child/child_app_shell.dart';
 import '../features/onboarding/contact_email_page.dart';
 import '../features/onboarding/partner_invite_page.dart';
 import '../features/onboarding/role_choice_page.dart';
-import '../features/onboarding/schedule_review_page.dart';
-import '../features/onboarding/schedule_sent_page.dart';
-import '../features/onboarding/template_apply_page.dart';
 import '../features/onboarding/tour_page.dart';
 import '../features/schedule/live_schedule_page.dart';
 import '../features/shell/app_shell.dart';
@@ -28,12 +25,6 @@ Widget pageForOnboarding(OnboardingDestination dest) {
       return const PartnerInvitePage();
     case OnboardingDestination.liveEditor:
       return const LiveSchedulePage(isOnboarding: true);
-    case OnboardingDestination.scheduleReview:
-      return const ScheduleReviewPage();
-    case OnboardingDestination.templateApply:
-      return const TemplateApplyPage();
-    case OnboardingDestination.scheduleSent:
-      return const ScheduleSentPage();
     case OnboardingDestination.subscription:
       return const SubscriptionPage(isOnboarding: true);
     case OnboardingDestination.tour:

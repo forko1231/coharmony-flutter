@@ -5,7 +5,6 @@ import 'calling_service.dart';
 import 'callkit_service.dart';
 import 'auth_service.dart';
 import 'api_client.dart';
-import 'custody_proposal_service.dart';
 import 'live_schedule_service.dart';
 import 'financial_service.dart';
 import 'location_service.dart';
@@ -37,7 +36,6 @@ class ServiceLocator {
   static late final TokenService tokenService;
   static late final ApiClient api;
   static late final AuthService auth;
-  static late final CustodyProposalService custodyProposal;
   static late final LiveScheduleService liveSchedule;
   static late final ScheduleService schedule;
   static late final FinancialService financial;
@@ -85,7 +83,6 @@ class ServiceLocator {
       onSubscriptionRequired: onSubscriptionRequired,
     );
     auth = AuthService(api, secureStorage, tokenService);
-    custodyProposal = CustodyProposalService(api);
     schedule = ScheduleService(api);
     financial = FinancialService(api);
     addressSearch = AddressSearchService(api);
@@ -110,7 +107,7 @@ class ServiceLocator {
         callKit.dismiss(e.roomName);
       }
     });
-    onboardingRouter = OnboardingRouter(auth, custodyProposal, subscription);
+    onboardingRouter = OnboardingRouter(auth, liveSchedule, subscription);
     postAuthRouter = PostAuthRouter(auth, subscription);
 
     // Security startup (mirrors MauiProgram.CreateMauiApp): initialise key

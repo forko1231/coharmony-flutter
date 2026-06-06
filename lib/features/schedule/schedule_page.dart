@@ -63,8 +63,8 @@ class _SchedulePageState extends State<SchedulePage> {
       final results = await Future.wait([
         ServiceLocator.schedule.getScheduleOptimized(_month, _year),
         ServiceLocator.financial.getCharges(),
-        ServiceLocator.custodyProposal.getApprovedSchedule(),
-        ServiceLocator.custodyProposal.getActiveProposal(),
+        ServiceLocator.liveSchedule.getApprovedSchedule(),
+        ServiceLocator.liveSchedule.getActiveProposal(),
       ]);
       final allItems = results[0] as List<ScheduleItem>;
       final allCharges = results[1] as List<FCharge>;

@@ -48,7 +48,7 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
 
   Future<void> _load() async {
     try {
-      _approved = await ServiceLocator.custodyProposal.getApprovedSchedule();
+      _approved = await ServiceLocator.liveSchedule.getApprovedSchedule();
     } catch (_) {}
     if (mounted) setState(() => _loading = false);
   }

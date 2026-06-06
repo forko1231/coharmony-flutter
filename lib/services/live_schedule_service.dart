@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../models/custody_models.dart';
 import 'api_client.dart';
 import 'websocket_service.dart';
 
@@ -21,6 +22,57 @@ class LiveScheduleService {
   Stream<int> get onChanged => _ws.onLiveScheduleChanged;
 
   Future<LiveResult> get() => _send('GET', '', null);
+
+  // ── Read adapters for the calendar/display surfaces ─────────────────────────
+  // The Schedule tab, date detail, and child views render custody from an
+  // ApprovedScheduleResponse. After the proposal cutover they read the LIVE schedule
+  // through these adapters (same shape) so the calendar always matches the editor.
+  Future<ApprovedScheduleResponse?> getApprovedSchedule() async {
+    final d = (await get()).data;
+    if (d == null) return ApprovedScheduleResponse();
+    return ApprovedScheduleResponse(
+      patternLength: d.patternLength,
+      days: [
+        for (final x in d.days)
+          ApprovedDayDto(
+            weekIndex: x.weekIndex,
+            dayIndex: x.dayIndex,
+            parentAssignment: x.parentAssignment,
+            transferTime: x.transferTime,
+            transferEndTime: x.transferEndTime,
+            transferLatitude: x.transferLatitude,
+            transferLongitude: x.transferLongitude,
+            transferLocationName: x.transferLocationName,
+            transferAddress: x.transferAddress,
+          ),
+      ],
+      overrides: [
+        for (final o in d.overrides)
+          ApprovedOverrideDto(
+            dateKey: o.dateKey,
+            month: o.month,
+            day: o.day,
+            parentAssignment: o.parentAssignment,
+            transferTime: o.transferTime,
+            transferEndTime: o.transferEndTime,
+            description: o.description,
+            isAnnual: o.isAnnual,
+            holidayRule: o.holidayRule,
+            alternationMode: o.alternationMode,
+            alternationStartParent: o.alternationStartParent,
+            transferLatitude: o.transferLatitude,
+            transferLongitude: o.transferLongitude,
+            transferLocationName: o.transferLocationName,
+            transferAddress: o.transferAddress,
+          ),
+      ],
+    );
+  }
+
+  // No proposals in the live model — always "none active". Kept so display code that
+  // used the proposal service compiles unchanged after the cutover.
+  Future<ActiveProposalResponse?> getActiveProposal() async =>
+      ActiveProposalResponse(hasActiveProposal: false);
 
   Future<LiveResult> upsertDay(int baseVersion, LiveDay day) =>
       _send('POST', 'day', {'baseVersion': baseVersion, ...day.fields()});

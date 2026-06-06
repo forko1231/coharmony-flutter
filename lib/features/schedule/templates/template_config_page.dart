@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../../navigation/app_navigator.dart';
-import '../../../services/analytics_service.dart';
 import '../../../services/custody_templates/custody_template.dart';
 import '../../../services/custody_templates/pending_template_service.dart';
-import '../../../services/custody_templates/template_apply_helper.dart';
-import '../../../services/service_locator.dart';
 import '../../../theme/app_colors.dart';
 import '../../../theme/app_palette.dart';
 import '../../../widgets/app_header.dart';
@@ -27,7 +23,7 @@ class TemplateConfigPage extends StatefulWidget {
 
 class _TemplateConfigPageState extends State<TemplateConfigPage> {
   final TemplateAnswers _answers = TemplateAnswers();
-  bool _busy = false;
+  final bool _busy = false; // apply is instant now (no proposal call); overlay kept inert
 
   // Preview colors mirror the editor legend.
   static const _dadBg = Color(0xFFBFDBFE);
@@ -418,37 +414,11 @@ class _TemplateConfigPageState extends State<TemplateConfigPage> {
       return;
     }
 
-    if (PendingTemplateService.isOnboardingMode) {
-      await _applyDuringOnboarding();
-      return;
-    }
-
-    // Editor mode: stash result, dismiss — the editor picks it up on next appearance.
+    // Stash the chosen template + answers; whoever opened this (the live editor, or
+    // onboarding's live editor) picks it up on return via PendingTemplateService and
+    // applies it under the schedule lock. No proposals.
     PendingTemplateService.setResult(widget.template, _answers);
     if (mounted) Navigator.of(context).maybePop();
-  }
-
-  Future<void> _applyDuringOnboarding() async {
-    setState(() => _busy = true);
-    try {
-      final result = await TemplateApplyHelper.createAndSubmitProposal(
-          ServiceLocator.custodyProposal, widget.template, _answers);
-      if (!result.success) {
-        if (mounted) {
-          setState(() => _busy = false);
-          await _alert("Couldn't apply template", result.message);
-        }
-        return;
-      }
-      AnalyticsService.trackCustom('onboarding_template_applied');
-      PendingTemplateService.clear();
-      if (mounted) await advanceOnboarding(context);
-    } catch (ex) {
-      if (mounted) {
-        setState(() => _busy = false);
-        await _alert("Couldn't apply template", '$ex');
-      }
-    }
   }
 
   Future<void> _alert(String title, String message) => showDialog<void>(

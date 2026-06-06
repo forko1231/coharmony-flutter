@@ -1,6 +1,6 @@
 import 'analytics_service.dart';
 import 'auth_service.dart';
-import 'custody_proposal_service.dart';
+import 'live_schedule_service.dart';
 import 'onboarding_state.dart';
 import 'subscription_service.dart';
 
@@ -12,9 +12,6 @@ enum OnboardingDestination {
   roleChoice,
   partnerInvite,
   liveEditor,
-  scheduleReview,
-  templateApply,
-  scheduleSent,
   subscription,
   tour,
   mainApp,
@@ -23,10 +20,10 @@ enum OnboardingDestination {
 /// Port of `Services/OnboardingRouter.cs`. Pure decision logic over the ported
 /// services + [OnboardingState]. Order matches the C# router exactly.
 class OnboardingRouter {
-  OnboardingRouter(this._auth, this._proposals, this._subscription);
+  OnboardingRouter(this._auth, this._live, this._subscription);
 
   final AuthService _auth;
-  final CustodyProposalService _proposals;
+  final LiveScheduleService _live;
   final SubscriptionService _subscription;
 
   Future<OnboardingDestination> routeToNext() async {
@@ -95,19 +92,16 @@ class OnboardingRouter {
     if (OnboardingState.schedulePromptShownAfterPartnerJoined) return false;
     if (!await _isPartnerLinked()) return false; // still waiting
 
-    bool hasScheduleOrProposal = false;
+    bool hasSchedule = false;
     try {
-      final approved = await _proposals.getApprovedSchedule();
-      final active = await _proposals.getActiveProposal();
-      hasScheduleOrProposal =
-          approved?.hasSchedule == true || active?.hasActiveProposal == true;
+      final r = await _live.get();
+      hasSchedule = r.data?.days.isNotEmpty ?? false;
     } catch (_) {
       return false;
     }
 
     OnboardingState.schedulePromptShownAfterPartnerJoined = true;
-    if (hasScheduleOrProposal) return false;
-    return true;
+    return !hasSchedule;
   }
 
   /// PartnerEmail is pre-populated for BOTH sides the moment an invite is sent, so
@@ -123,15 +117,7 @@ class OnboardingRouter {
   Future<bool> _isAlreadyOnboarded() async {
     try {
       final info = await _auth.getUserInfo();
-      if (info?.onboardingComplete == true) return true;
-
-      final partnerLinked = info != null &&
-          (info.partnerEmail ?? '').isNotEmpty &&
-          (info.inviteStatus ?? '').toLowerCase() != 'invited';
-      if (!partnerLinked) return false;
-
-      final approved = await _proposals.getApprovedSchedule();
-      return approved?.hasSchedule == true;
+      return info?.onboardingComplete == true;
     } catch (_) {
       return false;
     }

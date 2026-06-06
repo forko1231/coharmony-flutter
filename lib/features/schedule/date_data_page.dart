@@ -57,7 +57,7 @@ class _DateDataPageState extends State<DateDataPage> {
         _loadedMonth = _date.month;
         _loadedYear = _date.year;
       }
-      _approved ??= await ServiceLocator.custodyProposal.getApprovedSchedule();
+      _approved ??= await ServiceLocator.liveSchedule.getApprovedSchedule();
       if (_charges.isEmpty) _charges = await ServiceLocator.financial.getCharges();
       _recompute();
     } catch (_) {

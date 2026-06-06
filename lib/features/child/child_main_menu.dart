@@ -61,7 +61,7 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
   Future<void> _load() async {
     _email = Preferences.getString('email');
     try {
-      _approved = await ServiceLocator.custodyProposal.getApprovedSchedule();
+      _approved = await ServiceLocator.liveSchedule.getApprovedSchedule();
     } catch (_) {}
     await Future.wait([_loadFamily(), _loadMessages()]);
     if (mounted) setState(() => _loading = false);
