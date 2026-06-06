@@ -63,6 +63,82 @@ class AuthService {
     }
   }
 
+  /// Exchanges an Apple identity token for our app session. [firstName]/[lastName]
+  /// are only available on the user's first Apple sign-in. No MFA. The email cache
+  /// is synced from the server record (never from Apple's relay credential).
+  Future<bool> signInWithApple(String identityToken, {String? firstName, String? lastName}) async {
+    try {
+      final json = await _api.postJson('api/auth/apple', {
+        'idToken': identityToken,
+        if (firstName != null && firstName.isNotEmpty) 'firstName': firstName,
+        if (lastName != null && lastName.isNotEmpty) 'lastName': lastName,
+      });
+      if (json is Map<String, dynamic>) {
+        final tr = TokenResponse.fromJson(json);
+        if (tr.token != null && tr.token!.isNotEmpty) {
+          await _tokenService.setToken(
+            tr.token!,
+            DateTime.now().toUtc().add(Duration(minutes: tr.expiresInMinutes)),
+            tr.refreshToken,
+          );
+          _api.setAuthToken(tr.token);
+          await _syncEmailFromServer();
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Sends a verification code to a proposed real contact email (replacing an Apple
+  /// "Hide My Email" relay). Returns true if the code was sent.
+  Future<bool> requestContactEmail(String email) async {
+    try {
+      final json = await _api.postJson('api/auth/email/change/request', {'email': email});
+      return json is Map<String, dynamic> && json['success'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Confirms the code, swaps the account email server-side, and stores the re-issued
+  /// token (the old token's subject was the relay email). Returns true on success.
+  Future<bool> confirmContactEmail(String code) async {
+    try {
+      final json = await _api.postJson('api/auth/email/change/confirm', {'code': code});
+      if (json is Map<String, dynamic>) {
+        final tr = TokenResponse.fromJson(json);
+        if (tr.token != null && tr.token!.isNotEmpty) {
+          await _tokenService.setToken(
+            tr.token!,
+            DateTime.now().toUtc().add(Duration(minutes: tr.expiresInMinutes)),
+            tr.refreshToken,
+          );
+          _api.setAuthToken(tr.token);
+          await _syncEmailFromServer();
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Caches the signed-in email from the authoritative server record (not from any
+  /// SSO credential) for the few screens that still read the local 'email' pref.
+  Future<void> _syncEmailFromServer() async {
+    try {
+      final info = await getUserInfo();
+      final email = info?.email;
+      if (email != null && email.isNotEmpty) {
+        await Preferences.setString('email', email);
+      }
+    } catch (_) {/* best-effort cache */}
+  }
+
   /// Attempts to restore a session from stored tokens.
   Future<bool> tryRestoreSession() async {
     try {

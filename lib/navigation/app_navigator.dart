@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../features/child/child_app_shell.dart';
+import '../features/onboarding/contact_email_page.dart';
 import '../features/onboarding/partner_invite_page.dart';
 import '../features/onboarding/role_choice_page.dart';
 import '../features/onboarding/schedule_review_page.dart';
@@ -46,6 +47,8 @@ Future<Widget> resolveAfterAuth() async {
   switch (dest) {
     case PostAuthDestination.childApp:
       return const ChildAppShell();
+    case PostAuthDestination.contactEmail:
+      return const ContactEmailPage();
     case PostAuthDestination.subscription:
       return const SubscriptionPage();
     case PostAuthDestination.mainApp:

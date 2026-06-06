@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../../navigation/app_navigator.dart';
 import '../../services/preferences.dart';
@@ -61,10 +62,39 @@ class _SsoButtonsState extends State<SsoButtons> {
     }
   }
 
-  void _signInWithApple() {
-    // Apple is the next increment — it adds the "Hide My Email" contact-email step
-    // in onboarding and the /api/auth/apple endpoint.
-    _toast('Apple sign-in is coming soon.');
+  Future<void> _signInWithApple() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final cred = await SignInWithApple.getAppleIDCredential(
+        scopes: const [AppleIDAuthorizationScopes.email, AppleIDAuthorizationScopes.fullName],
+      );
+      final idToken = cred.identityToken;
+      if (idToken == null || idToken.isEmpty) {
+        _toast('Apple sign-in failed (no token).');
+        return;
+      }
+      // Name arrives only on the first sign-in; backend backfills it.
+      final ok = await ServiceLocator.auth.signInWithApple(
+        idToken,
+        firstName: cred.givenName,
+        lastName: cred.familyName,
+      );
+      if (!mounted) return;
+      if (ok) {
+        // The relay-email gate (if any) is handled by the post-auth router via the
+        // server record — we don't touch the email here.
+        if (mounted) await routeAfterAuth(context);
+      } else {
+        _toast('Could not sign in with Apple. Please try again.');
+      }
+    } on SignInWithAppleAuthorizationException catch (e) {
+      if (e.code != AuthorizationErrorCode.canceled) _toast('Apple sign-in error.');
+    } catch (_) {
+      _toast('Apple sign-in error. Please try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   void _toast(String msg) {
