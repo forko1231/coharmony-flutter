@@ -36,6 +36,7 @@ class ScheduleService {
     String repeatType = 'none',
     String? endDate,
     bool isCustodial = false,
+    bool visibleToKids = true,
   }) async {
     String formattedEndDate = '';
     if (endDate != null && endDate.isNotEmpty) {
@@ -55,6 +56,7 @@ class ScheduleService {
         repeatType: repeatType,
         endDate: formattedEndDate,
         isCustodial: isCustodial,
+        visibleToKids: visibleToKids,
       ).toJson(),
     );
     return response.contains('Updated');

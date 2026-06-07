@@ -12,12 +12,14 @@ class AddEventResult {
     required this.endTime,
     required this.repeatPattern,
     this.repeatEndDate,
+    this.visibleToKids = true,
   });
   final String eventName;
   final TimeOfDay startTime;
   final TimeOfDay endTime;
   final String repeatPattern; // "none" | "weekly" | ...
   final DateTime? repeatEndDate;
+  final bool visibleToKids; // also shown on linked kids' calendars
 }
 
 /// Port of `AddEventPopupView.xaml(.cs)` — a centered dialog for creating/editing an
@@ -31,6 +33,7 @@ class AddEventPopup extends StatefulWidget {
     this.initialEnd,
     this.initialRepeat,
     this.initialRepeatEnd,
+    this.initialVisibleToKids = true,
   });
 
   final bool isEdit;
@@ -39,6 +42,7 @@ class AddEventPopup extends StatefulWidget {
   final TimeOfDay? initialEnd;
   final String? initialRepeat;
   final DateTime? initialRepeatEnd;
+  final bool initialVisibleToKids;
 
   /// Present the dialog; resolves to the entered event (or null if cancelled).
   static Future<AddEventResult?> show(
@@ -49,6 +53,7 @@ class AddEventPopup extends StatefulWidget {
     TimeOfDay? initialEnd,
     String? initialRepeat,
     DateTime? initialRepeatEnd,
+    bool initialVisibleToKids = true,
   }) =>
       showDialog<AddEventResult>(
         context: context,
@@ -59,6 +64,7 @@ class AddEventPopup extends StatefulWidget {
           initialEnd: initialEnd,
           initialRepeat: initialRepeat,
           initialRepeatEnd: initialRepeatEnd,
+          initialVisibleToKids: initialVisibleToKids,
         ),
       );
 
@@ -72,6 +78,7 @@ class _AddEventPopupState extends State<AddEventPopup> {
   late TimeOfDay _end;
   late String _repeat;
   late DateTime _repeatEnd;
+  late bool _visibleToKids;
 
   static const _repeatOptions = ['none', 'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly', 'biyearly'];
 
@@ -84,6 +91,7 @@ class _AddEventPopupState extends State<AddEventPopup> {
     final r = (widget.initialRepeat ?? 'none').toLowerCase();
     _repeat = _repeatOptions.contains(r) ? r : 'none';
     _repeatEnd = widget.initialRepeatEnd ?? DateTime.now().add(const Duration(days: 30));
+    _visibleToKids = widget.initialVisibleToKids;
   }
 
   @override
@@ -115,6 +123,7 @@ class _AddEventPopupState extends State<AddEventPopup> {
       endTime: _end,
       repeatPattern: _repeat,
       repeatEndDate: _repeat == 'none' ? null : _repeatEnd,
+      visibleToKids: _visibleToKids,
     ));
   }
 
@@ -224,7 +233,34 @@ class _AddEventPopupState extends State<AddEventPopup> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
+                // Show on kids' calendars (off for adult-only events).
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Icon(Icons.child_care, size: 20, color: palette.textSecondary),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Show to kids',
+                                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                            Text('Appears on your children\'s calendar',
+                                style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+                          ],
+                        ),
+                      ),
+                      Switch(
+                        value: _visibleToKids,
+                        activeThumbColor: AppColors.primaryBlue,
+                        onChanged: (v) => setState(() => _visibleToKids = v),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
                 Container(height: 1, color: palette.border),
                 const SizedBox(height: 16),
                 Row(

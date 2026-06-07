@@ -100,6 +100,7 @@ class _DateDataPageState extends State<DateDataPage> {
         origMonth: s.month,
         origDay: s.day,
         origYear: s.year,
+        visibleToKids: s.visibleToKids,
       ));
     }
 
@@ -283,6 +284,7 @@ class _DateDataPageState extends State<DateDataPage> {
       initialEnd: e.end,
       initialRepeat: e.repeatType,
       initialRepeatEnd: e.endDate,
+      initialVisibleToKids: e.visibleToKids,
     );
     if (result == null || !mounted) return;
     setState(() => _busy = true);
@@ -336,6 +338,7 @@ class _DateDataPageState extends State<DateDataPage> {
           isCustodial: false,
           isOverride: false,
           isProtected: false,
+          visibleToKids: r.visibleToKids,
         ),
       ]);
       if (!ok) {
@@ -685,6 +688,7 @@ class _DayEvent {
     required this.origMonth,
     required this.origDay,
     required this.origYear,
+    this.visibleToKids = true,
   });
   final String tag;
   final TimeOfDay start;
@@ -696,4 +700,5 @@ class _DayEvent {
   final int origMonth;
   final int origDay;
   final int origYear;
+  final bool visibleToKids;
 }

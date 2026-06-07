@@ -48,6 +48,7 @@ class ScheduleItem {
     this.transferLongitude,
     this.transferLocationName,
     this.transferAddress,
+    this.visibleToKids = true,
     this.needsApproval = false,
     this.isUserCustodyDay = false,
   });
@@ -75,6 +76,7 @@ class ScheduleItem {
   final double? transferLongitude;
   final String? transferLocationName;
   final String? transferAddress;
+  final bool visibleToKids;
 
   // Client-side only (JsonIgnore in C#).
   bool needsApproval;
@@ -109,6 +111,7 @@ class ScheduleItem {
       transferLongitude: _dbl(j['transferLongitude']),
       transferLocationName: j['transferLocationName'] as String?,
       transferAddress: j['transferAddress'] as String?,
+      visibleToKids: j['visibleToKids'] as bool? ?? true,
     );
   }
 }
@@ -133,6 +136,7 @@ class ScheduleUpdateApiRequest {
     this.status = 'approved',
     this.proposerEmail = '',
     this.parentAssignment = '',
+    this.visibleToKids = true,
   });
   final int month;
   final int day;
@@ -150,6 +154,7 @@ class ScheduleUpdateApiRequest {
   final String status;
   final String proposerEmail;
   final String? parentAssignment;
+  final bool visibleToKids;
 
   Map<String, dynamic> toJson() => _stripNulls({
         'month': month,
@@ -168,6 +173,7 @@ class ScheduleUpdateApiRequest {
         'status': status,
         'proposerEmail': proposerEmail,
         'parentAssignment': parentAssignment,
+        'visibleToKids': visibleToKids,
       });
 }
 
@@ -225,6 +231,7 @@ class ScheduleUpdateRequest {
     this.transferLongitude,
     this.transferLocationName,
     this.transferAddress,
+    this.visibleToKids = true,
   });
   final int month;
   final int day;
@@ -246,6 +253,7 @@ class ScheduleUpdateRequest {
   final double? transferLongitude;
   final String? transferLocationName;
   final String? transferAddress;
+  final bool visibleToKids;
 
   Map<String, dynamic> toJson() => _stripNulls({
         'month': month,
@@ -268,6 +276,7 @@ class ScheduleUpdateRequest {
         'transferLongitude': transferLongitude,
         'transferLocationName': transferLocationName,
         'transferAddress': transferAddress,
+        'visibleToKids': visibleToKids,
       });
 }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/custody_models.dart';
+import '../../models/schedule_models.dart';
 import '../../services/holiday_resolver.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
@@ -21,6 +22,7 @@ class ChildSchedulePage extends StatefulWidget {
 class _ChildSchedulePageState extends State<ChildSchedulePage> {
   bool _loading = true;
   ApprovedScheduleResponse? _approved;
+  List<ScheduleItem> _events = const []; // parents' non-custodial events shared with kids
 
   late int _year;
   late int _month;
@@ -50,7 +52,60 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
     try {
       _approved = await ServiceLocator.liveSchedule.getApprovedSchedule();
     } catch (_) {}
+    await _loadEvents();
     if (mounted) setState(() => _loading = false);
+  }
+
+  // Parents' events the server has marked visible to kids (backend resolves child → parents).
+  Future<void> _loadEvents() async {
+    try {
+      final all = await ServiceLocator.schedule.getScheduleOptimized(_month, _year);
+      _events = all.where((s) => !s.isCustodial).toList();
+    } catch (_) {/* keep showing custody even if events fail */}
+  }
+
+  // Events occurring on [date] — direct matches + recurrence (mirrors the parent calendar).
+  List<ScheduleItem> _eventsOn(DateTime date) {
+    final out = <ScheduleItem>[];
+    final seen = <String>{};
+    void add(ScheduleItem s) {
+      final key = '${s.tag}|${s.startTime}|${s.endTime}';
+      if (seen.add(key)) out.add(s);
+    }
+    for (final s in _events) {
+      if (s.year == date.year && s.month == date.month && s.day == date.day) add(s);
+    }
+    for (final s in _events) {
+      final rt = s.repeatType;
+      if (rt.isEmpty || rt.toLowerCase() == 'none') continue;
+      if (s.year == date.year && s.month == date.month && s.day == date.day) continue;
+      if (_eventRepeatsOn(s, date)) add(s);
+    }
+    return out;
+  }
+
+  bool _eventRepeatsOn(ScheduleItem s, DateTime target) {
+    final orig = DateTime(s.year, s.month, s.day);
+    if (target.isBefore(orig)) return false;
+    if (s.endDate != null && target.isAfter(s.endDate!)) return false;
+    switch (s.repeatType.toLowerCase()) {
+      case 'daily':
+        return true;
+      case 'weekly':
+        return target.weekday == orig.weekday;
+      case 'biweekly':
+        return target.weekday == orig.weekday && (target.difference(orig).inDays ~/ 7) % 2 == 0;
+      case 'monthly':
+        return target.day == orig.day;
+      case 'quarterly':
+        return target.day == orig.day && ((target.year - orig.year) * 12 + (target.month - orig.month)) % 3 == 0;
+      case 'yearly':
+        return target.day == orig.day && target.month == orig.month;
+      case 'biyearly':
+        return target.day == orig.day && target.month == orig.month && (target.year - orig.year) % 2 == 0;
+      default:
+        return false;
+    }
   }
 
   void _shift(int delta) {
@@ -68,6 +123,7 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
       _year = y;
       _selectedDay = null;
     });
+    _loadEvents().then((_) { if (mounted) setState(() {}); });
   }
 
   bool get _hasSchedule => _approved?.hasSchedule ?? false;
@@ -208,7 +264,7 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
                     child: Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 640),
-                        child: !_hasSchedule
+                        child: (!_hasSchedule && _events.isEmpty)
                             ? _noSchedule(context)
                             : Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -328,6 +384,7 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
       final isToday = today.year == _year && today.month == _month && today.day == d;
       final selected = _selectedDay == d;
       final decoration = _custodyDecoration(custody);
+      final hasEvents = _eventsOn(DateTime(_year, _month, d)).isNotEmpty;
       cells.add(Expanded(
         child: GestureDetector(
           onTap: () => setState(() => _selectedDay = d),
@@ -340,9 +397,21 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
                   ? Border.all(color: AppColors.accentPurple, width: 2)
                   : (isToday ? Border.all(color: AppColors.primaryBlue, width: 2) : Border.all(color: palette.border)),
             ),
-            child: Center(
-                child: Text('$d',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: palette.textPrimary))),
+            child: Stack(
+              children: [
+                Center(
+                    child: Text('$d',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: palette.textPrimary))),
+                if (hasEvents)
+                  const Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: EdgeInsets.only(bottom: 4),
+                      child: Icon(Icons.circle, size: 6, color: AppColors.primaryBlue),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ));
@@ -423,8 +492,39 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
             Text('Transfer at ${time.format(context)}',
                 style: TextStyle(fontSize: 13, color: palette.textSecondary)),
           ],
+          ..._dayEventTiles(context),
         ],
       ),
     );
+  }
+
+  List<Widget> _dayEventTiles(BuildContext context) {
+    final palette = context.palette;
+    final events = _eventsOn(DateTime(_year, _month, _selectedDay!));
+    if (events.isEmpty) return const [];
+    return [
+      const SizedBox(height: 12),
+      Divider(color: palette.border, height: 1),
+      const SizedBox(height: 12),
+      Text('Events', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: palette.textSecondary)),
+      const SizedBox(height: 6),
+      for (final e in events)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              const Icon(Icons.circle, size: 8, color: AppColors.primaryBlue),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(e.tag,
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: palette.textPrimary)),
+              ),
+              if (_parseTod(e.startTime) != null)
+                Text(_parseTod(e.startTime)!.format(context),
+                    style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+            ],
+          ),
+        ),
+    ];
   }
 }
