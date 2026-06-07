@@ -59,7 +59,7 @@ import flutter_callkit_incoming
 
   /// Standard APNs token → hand to Dart to register with the Notification Hub (platform "ios").
   override func application(_ application: UIApplication,
-                            didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+                            didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Foundation.Data) {
     let token = deviceToken.map { String(format: "%02x", $0) }.joined()
     pushChannel?.invokeMethod("onApnsToken", arguments: token)
     super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
