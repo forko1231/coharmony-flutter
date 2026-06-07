@@ -524,6 +524,8 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   // co-parent's prior agreement was already cleared server-side and they'll re-agree.
   Future<void> _continue() async {
     if (_busy) return;
+    await _flushAndWait(); // commit any pending day edits before leaving onboarding
+    if (!mounted) return;
     setState(() => _busy = true);
     await _svc.agree(); // best-effort; we proceed regardless of network result
     OnboardingState.scheduleAcknowledged = true;
@@ -611,18 +613,46 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         ),
       );
 
+  // A live request is in flight (day commit drain or a bulk op) — block the UI so nothing
+  // overlaps it; the header shows "Saving…".
+  bool get _inFlight => _busy || _sendingDays;
+  bool get _hasUnsaved => _inFlight || _pendingDays.isNotEmpty || (_commitDebounce?.isActive ?? false);
+
+  // Don't leave the editor until every pending change is committed (backup so nothing is
+  // lost). Flush the queue, then wait for it to settle (with the blocking loader showing).
+  Future<void> _flushAndWait() async {
+    _commitDebounce?.cancel();
+    if (_pendingDays.isNotEmpty && !_sendingDays) {
+      unawaited(_drainDayCommits());
+    }
+    var guard = 0;
+    while ((_sendingDays || _busy || _pendingDays.isNotEmpty) && mounted && guard++ < 200) {
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
   // ── build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    return Scaffold(
-      backgroundColor: palette.background,
-      body: SafeArea(
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _noPartner
-                ? _centeredMessage(context, 'Link your co-parent first to start building your schedule together.')
-                : _body(context),
+    return PopScope(
+      // Block the back/pop while anything is unsaved; flush + wait, then pop ourselves.
+      canPop: !_hasUnsaved,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final navigator = Navigator.of(context);
+        await _flushAndWait();
+        if (mounted) navigator.pop(result);
+      },
+      child: Scaffold(
+        backgroundColor: palette.background,
+        body: SafeArea(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _noPartner
+                  ? _centeredMessage(context, 'Link your co-parent first to start building your schedule together.')
+                  : _body(context),
+        ),
       ),
     );
   }
@@ -682,6 +712,11 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         // Docked editor panel (day / override) — non-modal; grid stays usable above it.
         if (docked)
           Positioned(left: 0, right: 0, bottom: 0, child: _dockedPanel(context)),
+        // Block input while a request is in flight so saves can't overlap / be lost.
+        if (_inFlight)
+          const Positioned.fill(
+            child: AbsorbPointer(child: ColoredBox(color: Color(0x14000000))),
+          ),
         // Floating action menu (AI / Templates / Help) — hidden while the panel is docked.
         if (!docked)
           Positioned(
