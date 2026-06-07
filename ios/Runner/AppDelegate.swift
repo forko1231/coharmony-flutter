@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import PushKit
+import UserNotifications
 import flutter_callkit_incoming
 
 // iOS uses native Apple MapKit (via apple_maps_flutter), matching the MAUI app — no
@@ -14,16 +15,70 @@ import flutter_callkit_incoming
 // call to CallKit immediately — Apple requires this on every VoIP push.
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, PKPushRegistryDelegate {
+  // Channel for STANDARD APNs alert notifications (schedule changes, reminders, messages).
+  // Separate from the VoIP/PushKit path used for calls.
+  private var pushChannel: FlutterMethodChannel?
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // Register for VoIP pushes.
+    // Register for VoIP pushes (calls).
     let voipRegistry = PKPushRegistry(queue: DispatchQueue.main)
     voipRegistry.delegate = self
     voipRegistry.desiredPushTypes = [PKPushType.voIP]
 
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+
+    // Bridge for standard remote (alert) notifications — Dart asks us to register, we hand
+    // back the raw APNs token (no Firebase on iOS; the token goes to Azure Notification Hub).
+    if let controller = window?.rootViewController as? FlutterViewController {
+      let channel = FlutterMethodChannel(name: "coharmony/push", binaryMessenger: controller.binaryMessenger)
+      channel.setMethodCallHandler { [weak self] call, res in
+        if call.method == "registerForPush" {
+          self?.registerForStandardPush()
+          res(nil)
+        } else {
+          res(FlutterMethodNotImplemented)
+        }
+      }
+      pushChannel = channel
+    }
+    return result
+  }
+
+  /// Ask for notification permission, then register for standard remote notifications.
+  private func registerForStandardPush() {
+    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
+      guard granted else { return }
+      DispatchQueue.main.async {
+        UIApplication.shared.registerForRemoteNotifications()
+      }
+    }
+  }
+
+  /// Standard APNs token → hand to Dart to register with the Notification Hub (platform "ios").
+  override func application(_ application: UIApplication,
+                            didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+    let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+    pushChannel?.invokeMethod("onApnsToken", arguments: token)
+    super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
+  }
+
+  override func application(_ application: UIApplication,
+                            didFailToRegisterForRemoteNotificationsWithError error: Error) {
+    NSLog("[push] APNs registration failed: \(error.localizedDescription)")
+    super.application(application, didFailToRegisterForRemoteNotificationsWithError: error)
+  }
+
+  /// A remote (alert) notification arrived / was tapped → forward its data for routing.
+  override func application(_ application: UIApplication,
+                            didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                            fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+    if let data = userInfo["data"] as? [String: Any] {
+      pushChannel?.invokeMethod("onApnsTap", arguments: data)
+    }
+    super.application(application, didReceiveRemoteNotification: userInfo, fetchCompletionHandler: completionHandler)
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {

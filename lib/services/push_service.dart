@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
 import 'callkit_service.dart';
@@ -42,8 +43,18 @@ class PushService {
 
   bool _started = false;
 
+  // Native bridge for iOS standard APNs (alert) notifications. iOS has no Firebase here,
+  // so we register for remote notifications natively and the AppDelegate hands the raw
+  // APNs token back over this channel. (Calls use a separate VoIP/PushKit token.)
+  static const MethodChannel _iosPush = MethodChannel('coharmony/push');
+
   Future<void> init() async {
-    if (!Platform.isAndroid || _started) return;
+    if (_started) return;
+    if (Platform.isIOS) {
+      await _initIos();
+      return;
+    }
+    if (!Platform.isAndroid) return;
     _started = true;
     try {
       await Firebase.initializeApp();
@@ -73,6 +84,38 @@ class PushService {
       // Push is best-effort; failure here must never block the app.
       _started = false;
     }
+  }
+
+  // iOS: standard APNs alert notifications (schedule changed, reminders, messages, …).
+  // Calls stay on the existing VoIP/PushKit path. The AppDelegate asks the OS for the
+  // token and reports it back as 'onApnsToken'; a notification tap arrives as 'onApnsTap'.
+  Future<void> _initIos() async {
+    _started = true;
+    try {
+      await _notifications.initLocalNotifications();
+      _iosPush.setMethodCallHandler((call) async {
+        switch (call.method) {
+          case 'onApnsToken':
+            final token = call.arguments as String?;
+            if (token != null && token.isNotEmpty) {
+              await _notifications.registerApnsAlertToken(token);
+            }
+          case 'onApnsTap':
+            final data = _stringData(_asMap(call.arguments));
+            final type = _notifications.getNotificationType(data);
+            _notifications.handleNotificationTapped(type, data);
+        }
+        return null;
+      });
+      await _iosPush.invokeMethod('registerForPush');
+    } catch (_) {
+      _started = false;
+    }
+  }
+
+  Map<String, dynamic> _asMap(Object? args) {
+    if (args is Map) return args.map((k, v) => MapEntry(k.toString(), v));
+    return const {};
   }
 
   void _onForegroundMessage(RemoteMessage message) {

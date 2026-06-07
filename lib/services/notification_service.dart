@@ -103,6 +103,33 @@ class NotificationService {
     }
   }
 
+  /// iOS STANDARD APNs (alert) token registration. Kept SEPARATE from the VoIP-token
+  /// registration (which also uses platform 'ios' but the same base installation id): we
+  /// give the alert installation a distinct id ("{base}-apns") so the two don't overwrite
+  /// each other in the Notification Hub — VoIP delivers calls, this delivers alerts.
+  Future<bool> registerApnsAlertToken(String apnsToken) async {
+    try {
+      final userEmail = await _secureStorage.getSecureEmail();
+      if (userEmail.isEmpty || apnsToken.isEmpty) return false;
+      final installationId = '${await _getInstallationId()}-apns';
+      const plat = 'ios';
+      final json = await _api.postJson(
+        'api/notifications/register',
+        NotificationRegisterRequest(
+          deviceToken: apnsToken,
+          platform: plat,
+          userEmail: userEmail,
+          installationId: installationId,
+          tags: _tagsFor(userEmail, plat),
+        ).toJson(),
+      );
+      return json is Map<String, dynamic> &&
+          NotificationRegistrationResponse.fromJson(json).success;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> updateRegistration({List<String>? additionalTags}) async {
     try {
       if (_registrationId.isEmpty) return false;
