@@ -73,6 +73,10 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   Widget? _dockedChild;
   Timer? _commitDebounce;
   Timer? _savedFlashTimer;
+  // Per-day presence lock: while a day panel is open we hold a lock on that day so the
+  // co-parent sees it locked and can't edit it. Heartbeated; released on close/switch.
+  ({int w, int d})? _heldDayKey;
+  Timer? _dayLockBeat;
 
   StreamSubscription<int>? _wsSub;
   Timer? _poll;
@@ -101,6 +105,10 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     _presence?.cancel();
     _commitDebounce?.cancel();
     _savedFlashTimer?.cancel();
+    _dayLockBeat?.cancel();
+    // Best-effort release so we don't strand the day lock for the co-parent.
+    final k = _heldDayKey;
+    if (k != null) _svc.releaseDayLock(k.w, k.d);
     super.dispose();
   }
 
@@ -208,9 +216,17 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     return l != null && l.by.toLowerCase() != _me;
   }
 
-  // The co-parent is actively editing the whole schedule (template / AI / pattern length).
-  // Per-day edits no longer hold a lock — they just stream in live.
-  bool get _partnerEditing => _scheduleLockedByOther;
+  // The co-parent is actively editing — either the whole schedule (template/AI/pattern) or
+  // a specific day (they have its panel open).
+  bool get _partnerEditing {
+    if (_scheduleLockedByOther) return true;
+    final d = _data;
+    if (d == null) return false;
+    for (final l in d.dayLocks) {
+      if (l.by.toLowerCase() != _me) return true;
+    }
+    return false;
+  }
 
   // The co-parent has the editor open (heartbeat fresh) but isn't mid-edit.
   bool get _partnerHere => _data?.partnerPresent(_me) ?? false;
@@ -298,6 +314,11 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       _toast('Your co-parent is editing the whole schedule right now.');
       return;
     }
+    final lockedBy = d.dayLockedBy(weekIndex, dayIndex);
+    if (lockedBy != null && lockedBy.toLowerCase() != _me) {
+      _toast('Your co-parent is editing that day right now.');
+      return;
+    }
     HapticFeedback.selectionClick();
     _openDayEditor(weekIndex, dayIndex);
   }
@@ -339,12 +360,43 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         onClose: _closeDock,
       );
     });
+    // Hold a presence lock on this day so the co-parent sees it locked.
+    _holdDayLock(weekIndex, dayIndex);
   }
 
-  // Close the docked panel (only entry point is the ✕). Flush any queued commit.
+  // Acquire (and keep alive) the per-day lock for the open day, releasing any previous one.
+  Future<void> _holdDayLock(int weekIndex, int dayIndex) async {
+    await _releaseHeldDayLock();
+    _heldDayKey = (w: weekIndex, d: dayIndex);
+    final ok = await _svc.acquireDayLock(weekIndex, dayIndex);
+    if (!mounted) return;
+    if (!ok) {
+      // Lost the race — the co-parent grabbed it first.
+      _heldDayKey = null;
+      _toast('Your co-parent just started editing that day.');
+      _closeDock();
+      await _refresh();
+      return;
+    }
+    _dayLockBeat?.cancel();
+    _dayLockBeat = Timer.periodic(const Duration(seconds: 30), (_) {
+      final k = _heldDayKey;
+      if (k != null) _svc.acquireDayLock(k.w, k.d); // re-acquire extends the 45s TTL
+    });
+  }
+
+  Future<void> _releaseHeldDayLock() async {
+    _dayLockBeat?.cancel();
+    final k = _heldDayKey;
+    _heldDayKey = null;
+    if (k != null) await _svc.releaseDayLock(k.w, k.d);
+  }
+
+  // Close the docked panel (only entry point is the ✕). Release the day lock + flush commits.
   void _closeDock() {
     if (!mounted) return;
     setState(() { _dockedChild = null; _selWeek = null; _selDay = null; });
+    _releaseHeldDayLock();
     _flushDayCommits();
   }
 
@@ -454,6 +506,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
             transferLocationName: existing.transferLocationName,
             transferAddress: existing.transferAddress,
           );
+    _releaseHeldDayLock(); // override editor isn't a grid day
     setState(() {
       _selWeek = null;
       _selDay = null;
@@ -732,6 +785,20 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         ),
         // Live whole-schedule lock overlay.
         if (_scheduleLockedByOther) _lockOverlay(context, d),
+        // Keep a way OUT even while the co-parent holds the whole-schedule lock (the overlay
+        // covers the header back button) — render a back button on top of it.
+        if (_scheduleLockedByOther && !widget.isOnboarding)
+          Positioned(
+            top: MediaQuery.viewPaddingOf(context).top + 4,
+            left: 4,
+            child: Material(
+              color: Colors.transparent,
+              child: IconButton(
+                icon: Icon(Icons.arrow_back, color: context.palette.textPrimary),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+            ),
+          ),
         // Docked editor panel (day / override) — non-modal; grid stays usable above it.
         if (docked)
           Positioned(left: 0, right: 0, bottom: 0, child: _dockedPanel(context)),
@@ -982,6 +1049,8 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     final parent = cell?.parentAssignment ?? 'None';
     final time = _tod(cell?.transferTime);
     final selected = _selWeek == weekIndex && _selDay == dayIndex;
+    final lockedBy = d.dayLockedBy(weekIndex, dayIndex);
+    final lockedByOther = lockedBy != null && lockedBy.toLowerCase() != _me;
 
     return GestureDetector(
       onTap: () => _tapDay(weekIndex, dayIndex),
@@ -993,14 +1062,22 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         decoration: BoxDecoration(
           color: parent == 'None' ? Colors.transparent : _fill(parent),
           border: Border.all(
-            color: selected ? AppColors.primaryBlue : palette.border,
-            width: selected ? 3 : 1,
+            color: selected
+                ? AppColors.primaryBlue
+                : lockedByOther
+                    ? AppColors.warningAmber
+                    : palette.border,
+            width: (selected || lockedByOther) ? (selected ? 3 : 2) : 1,
           ),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Stack(
           children: [
-            if (parent == 'None')
+            if (lockedByOther)
+              const Align(
+                  alignment: Alignment.topCenter,
+                  child: Icon(Icons.lock, size: 12, color: AppColors.warningAmber))
+            else if (parent == 'None')
               Center(
                 child: Text('Tap to\nedit', textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 9, color: palette.textSecondary)),
