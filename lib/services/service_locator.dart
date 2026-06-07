@@ -23,6 +23,8 @@ import 'secure_storage_service.dart';
 import 'token_service.dart';
 import '../security/message_encryption_service.dart';
 import '../security/security_services.dart';
+import 'package:flutter/material.dart';
+import '../features/subscription/subscription_page.dart';
 
 /// Minimal service locator — the Flutter equivalent of the DI registration in
 /// MAUI's `MauiProgram.cs`. Singletons are created in dependency order:
@@ -78,9 +80,12 @@ class ServiceLocator {
     tokenService = TokenService(secureStorage);
     api = ApiClient(
       tokenService: tokenService,
-      isOnboardingCompleted: isOnboardingCompleted,
-      accountType: accountType,
-      onSubscriptionRequired: onSubscriptionRequired,
+      // Defaults so a runtime 402 (Payment Required) is actually HANDLED. Previously these
+      // were null, so the ApiClient silently swallowed 402s — leaving a logged-in user stuck
+      // with empty/failed data and no paywall (recovered only by logging out and back in).
+      isOnboardingCompleted: isOnboardingCompleted ?? (() => OnboardingState.isCompleted),
+      accountType: accountType ?? (() => Preferences.getString('AccountType')),
+      onSubscriptionRequired: onSubscriptionRequired ?? _handleSubscriptionRequired,
     );
     auth = AuthService(api, secureStorage, tokenService);
     schedule = ScheduleService(api);
@@ -122,5 +127,32 @@ class ServiceLocator {
     OnboardingState.ensureSchemaUpToDate();
 
     _initialized = true;
+  }
+
+  static bool _subRecovering = false;
+
+  // Runtime 402 (Payment Required) handler for a signed-in, onboarded, non-child user.
+  // A 402 can mean the server's subscription record went stale (e.g. the store auto-renewed
+  // but the server hasn't re-validated the receipt — its status lazily flips to "expired").
+  // So we RE-VALIDATE against the store first (same thing logging out/in did); if that
+  // restores access, the user keeps working with no interruption. Only if it's genuinely
+  // inactive do we route to the paywall — instead of silently leaving them in a broken app.
+  static Future<void> _handleSubscriptionRequired() async {
+    if (_subRecovering) return;
+    _subRecovering = true;
+    try {
+      final (valid, _) = await subscription.validateSubscription();
+      if (valid) return; // store says active → server record reconciled → access restored
+      final nav = AppNavigation.navigatorKey.currentState;
+      nav?.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const SubscriptionPage()),
+        (route) => false,
+      );
+    } catch (_) {
+      // best-effort; never throw out of a background API call
+    } finally {
+      // Release the latch after a beat so a later genuine lapse can still react.
+      Future.delayed(const Duration(seconds: 3), () => _subRecovering = false);
+    }
   }
 }
