@@ -302,6 +302,9 @@ class LiveDay {
   final double? transferLongitude;
   final String? transferLocationName;
   final String? transferAddress;
+  final bool hasConflict;
+  final String? conflictReason;
+  final String? conflictMarkedBy;
 
   LiveDay({
     required this.weekIndex,
@@ -313,6 +316,9 @@ class LiveDay {
     this.transferLongitude,
     this.transferLocationName,
     this.transferAddress,
+    this.hasConflict = false,
+    this.conflictReason,
+    this.conflictMarkedBy,
   });
 
   factory LiveDay.fromJson(Map<String, dynamic> j) => LiveDay(
@@ -325,6 +331,9 @@ class LiveDay {
         transferLongitude: (j['transferLongitude'] as num?)?.toDouble(),
         transferLocationName: j['transferLocationName'] as String?,
         transferAddress: j['transferAddress'] as String?,
+        hasConflict: j['hasConflict'] as bool? ?? false,
+        conflictReason: j['conflictReason'] as String?,
+        conflictMarkedBy: j['conflictMarkedBy'] as String?,
       );
 
   Map<String, dynamic> fields() => {
@@ -337,6 +346,9 @@ class LiveDay {
         'transferLongitude': transferLongitude,
         'transferLocationName': transferLocationName,
         'transferAddress': transferAddress,
+        'hasConflict': hasConflict,
+        'conflictReason': conflictReason,
+        'conflictMarkedBy': conflictMarkedBy,
       };
 }
 

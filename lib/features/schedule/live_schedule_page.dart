@@ -404,6 +404,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   // Each change coalesces into _pendingDays (latest per day wins), debounced so typing an
   // address doesn't fire per keystroke, then drained serially so versions stay consistent.
   void _commitDay(int weekIndex, int dayIndex, DayEditCommit c) {
+    final cur = _data?.dayAt(weekIndex, dayIndex);
     final day = LiveDay(
       weekIndex: weekIndex,
       dayIndex: dayIndex,
@@ -414,6 +415,10 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       transferLongitude: c.location?.longitude,
       transferLocationName: c.location?.name,
       transferAddress: c.location?.address,
+      // Preserve any conflict flag — editing the assignment/time doesn't clear it.
+      hasConflict: cur?.hasConflict ?? false,
+      conflictReason: cur?.conflictReason,
+      conflictMarkedBy: cur?.conflictMarkedBy,
     );
     _pendingDays['$weekIndex,$dayIndex'] = day;
     // Optimistic: recolor the cell immediately; the network write follows.
@@ -430,6 +435,90 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   void _flushDayCommits() {
     _commitDebounce?.cancel();
     _drainDayCommits();
+  }
+
+  // Long-press a day to flag/clear a conflict — free-form, live, no rules. Either parent can
+  // mark any day; it shows red + ⚠️ for both. Editing the day keeps the flag.
+  Future<void> _toggleConflict(int weekIndex, int dayIndex) async {
+    final data = _data;
+    if (data == null) return;
+    if (_scheduleLockedByOther) {
+      _toast('Your co-parent is editing the whole schedule right now.');
+      return;
+    }
+    final lockedBy = data.dayLockedBy(weekIndex, dayIndex);
+    if (lockedBy != null && lockedBy.toLowerCase() != _me) {
+      _toast('Your co-parent is editing that day right now.');
+      return;
+    }
+    final cur = data.dayAt(weekIndex, dayIndex);
+    final has = cur?.hasConflict ?? false;
+    String? reason;
+    if (has) {
+      final clear = await _confirmDialog('Clear conflict?', 'Remove the conflict flag on this day?', 'Clear');
+      if (clear != true) return;
+    } else {
+      reason = await _promptDialog('Mark conflict', 'Add a note (optional) — e.g. work trip, prior plans');
+      if (reason == null) return; // cancelled
+    }
+    if (!mounted) return;
+    HapticFeedback.selectionClick();
+    final day = LiveDay(
+      weekIndex: weekIndex,
+      dayIndex: dayIndex,
+      parentAssignment: cur?.parentAssignment ?? 'None',
+      transferTime: cur?.transferTime,
+      transferEndTime: cur?.transferEndTime,
+      transferLatitude: cur?.transferLatitude,
+      transferLongitude: cur?.transferLongitude,
+      transferLocationName: cur?.transferLocationName,
+      transferAddress: cur?.transferAddress,
+      hasConflict: !has,
+      conflictReason: !has ? (reason!.trim().isEmpty ? null : reason.trim()) : null,
+      conflictMarkedBy: !has ? _me : null,
+    );
+    _pendingDays['$weekIndex,$dayIndex'] = day;
+    setState(() { _data = _data!.withDay(day); _saving = true; });
+    _flushDayCommits();
+  }
+
+  Future<bool?> _confirmDialog(String title, String body, String confirmLabel) {
+    final palette = context.palette;
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: palette.surfaceElevated,
+        title: Text(title),
+        content: Text(body, style: TextStyle(color: palette.textSecondary)),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: Text(confirmLabel)),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _promptDialog(String title, String hint) {
+    final ctrl = TextEditingController();
+    final palette = context.palette;
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: palette.surfaceElevated,
+        title: Text(title),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLength: 200,
+          decoration: InputDecoration(hintText: hint),
+          onSubmitted: (v) => Navigator.of(ctx).pop(v),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(ctrl.text), child: const Text('Mark conflict')),
+        ],
+      ),
+    );
   }
 
   Future<void> _drainDayCommits() async {
@@ -1051,9 +1140,20 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     final selected = _selWeek == weekIndex && _selDay == dayIndex;
     final lockedBy = d.dayLockedBy(weekIndex, dayIndex);
     final lockedByOther = lockedBy != null && lockedBy.toLowerCase() != _me;
+    final conflict = cell?.hasConflict ?? false;
+
+    final borderColor = selected
+        ? AppColors.primaryBlue
+        : conflict
+            ? AppColors.dangerRed
+            : lockedByOther
+                ? AppColors.warningAmber
+                : palette.border;
+    final borderWidth = selected ? 3.0 : (conflict || lockedByOther) ? 2.0 : 1.0;
 
     return GestureDetector(
       onTap: () => _tapDay(weekIndex, dayIndex),
+      onLongPress: () => _toggleConflict(weekIndex, dayIndex),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOut,
@@ -1061,19 +1161,14 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         padding: const EdgeInsets.all(4),
         decoration: BoxDecoration(
           color: parent == 'None' ? Colors.transparent : _fill(parent),
-          border: Border.all(
-            color: selected
-                ? AppColors.primaryBlue
-                : lockedByOther
-                    ? AppColors.warningAmber
-                    : palette.border,
-            width: (selected || lockedByOther) ? (selected ? 3 : 2) : 1,
-          ),
+          border: Border.all(color: borderColor, width: borderWidth),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Stack(
           children: [
-            if (lockedByOther)
+            if (conflict)
+              const Align(alignment: Alignment.topCenter, child: Text('⚠️', style: TextStyle(fontSize: 11)))
+            else if (lockedByOther)
               const Align(
                   alignment: Alignment.topCenter,
                   child: Icon(Icons.lock, size: 12, color: AppColors.warningAmber))
@@ -1475,8 +1570,8 @@ class _GuideDialogState extends State<_GuideDialog> {
     _GuideStep('icon_handshake', AppColors.iconBgGreen, AppColors.successGreen, 'You both edit it live',
         'There are no proposals — you share ONE schedule and edit it together in real time. When it looks right, you each tap Agree; once you BOTH agree it becomes your official schedule.',
         visual: _Vis.live),
-    _GuideStep('icon_alert', AppColors.iconBgYellow, AppColors.warningAmber, 'Editing at the same time',
-        "When your co-parent is in the editor you'll see \"they're also here\". If they're changing a day or applying a template, it locks briefly so edits don't collide — and if you both change something, we keep the latest and let you reload.",
+    _GuideStep('icon_alert', AppColors.iconBgYellow, AppColors.warningAmber, 'Conflicts & editing together',
+        "Long-press any day to flag it as a conflict (turns red ⚠️) with an optional note — handy when a day doesn't work for you. When your co-parent is editing a day or running a template, you'll see it locked so edits don't collide.",
         visual: _Vis.conflict),
     _GuideStep('icon_sparkle', AppColors.iconBgPurple, AppColors.accentPurple, 'Need a hand? Use the menu',
         'Tap the menu button (bottom-right) for the AI assistant — it can build a whole schedule for you — and ready-made Templates you can apply in one tap.',
