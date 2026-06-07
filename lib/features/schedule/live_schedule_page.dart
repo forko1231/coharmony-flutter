@@ -748,6 +748,69 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         _ => Colors.transparent,
       };
 
+  // The OTHER parent's colour (for the changeover gradient: this parent until the handoff,
+  // the other parent for the overnight).
+  static Color _otherFill(String p) => switch (p) {
+        'Husband' => AppColors.parentMom,
+        'Wife' => AppColors.parentDad,
+        _ => Colors.transparent,
+      };
+
+  static int _minOfDay(TimeOfDay t) => t.hour * 60 + t.minute;
+
+  // Monotonic, clamped gradient stops (same approach as the month calendars).
+  static List<double> _stops(List<double> raw) {
+    final out = <double>[];
+    var prev = 0.0;
+    for (final v in raw) {
+      var c = v.clamp(0.0, 1.0);
+      if (c < prev) c = prev;
+      out.add(c);
+      prev = c;
+    }
+    return out;
+  }
+
+  // The day-cell fill — mirrors the month calendar so a handoff renders as a top→bottom
+  // changeover (this parent until the transfer time, the other parent below) instead of a
+  // flat colour. Without this, templated patterns (full of changeover days) looked shifted.
+  BoxDecoration _cellDecoration(LiveDay? cell, {required Color border, required double width}) {
+    final parent = cell?.parentAssignment ?? 'None';
+    final base = BoxDecoration(
+      border: Border.all(color: border, width: width),
+      borderRadius: BorderRadius.circular(10),
+    );
+    if (parent == 'None') return base.copyWith(color: Colors.transparent);
+    final fill = _fill(parent);
+    final start = _tod(cell?.transferTime);
+    final end = _tod(cell?.transferEndTime);
+    if (start == null || parent == 'Both') return base.copyWith(color: fill);
+
+    final to = _otherFill(parent);
+    final sp = (_minOfDay(start) / 1440).clamp(0.0, 1.0);
+    if (end != null && _minOfDay(end) > _minOfDay(start)) {
+      // A within-day visit window: this parent, the other for the window, back to this parent.
+      final ep = (_minOfDay(end) / 1440).clamp(0.0, 1.0);
+      return base.copyWith(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [fill, fill, to, to, fill, fill],
+          stops: _stops([0, sp - 0.001, sp, ep, ep + 0.001, 1]),
+        ),
+      );
+    }
+    // A changeover: this parent until the handoff, the other parent for the overnight.
+    return base.copyWith(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [fill, fill, to, to],
+        stops: _stops([0, sp - 0.001, sp, 1]),
+      ),
+    );
+  }
+
   String _shortName(String email) {
     final at = email.indexOf('@');
     return at > 0 ? email.substring(0, at) : email;
@@ -1159,11 +1222,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         curve: Curves.easeOut,
         height: 64,
         padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          color: parent == 'None' ? Colors.transparent : _fill(parent),
-          border: Border.all(color: borderColor, width: borderWidth),
-          borderRadius: BorderRadius.circular(10),
-        ),
+        decoration: _cellDecoration(cell, border: borderColor, width: borderWidth),
         child: Stack(
           children: [
             if (conflict)
