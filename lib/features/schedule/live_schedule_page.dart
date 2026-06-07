@@ -56,8 +56,17 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   List<PointOfInterest> _pois = const [];
   bool _loading = true;
   bool _noPartner = false;
-  bool _busy = false; // a mutating call is in flight
+  bool _busy = false; // a bulk/structural call is in flight (week length, template, agree)
   bool _introShown = false; // onboarding one-shot "co-parent already started" intro
+
+  // Auto-commit (no Save button): day edits coalesce into _pendingDays and are sent
+  // serialized + debounced. _saving drives the "Saving…/Saved" status; never blocks editing.
+  final Map<String, LiveDay> _pendingDays = {};
+  bool _sendingDays = false;
+  bool _saving = false;
+  bool _savedFlash = false;
+  Timer? _commitDebounce;
+  Timer? _savedFlashTimer;
 
   StreamSubscription<int>? _wsSub;
   Timer? _poll;
@@ -84,6 +93,8 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     _wsSub?.cancel();
     _poll?.cancel();
     _presence?.cancel();
+    _commitDebounce?.cancel();
+    _savedFlashTimer?.cancel();
     super.dispose();
   }
 
@@ -187,16 +198,9 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     return l != null && l.by.toLowerCase() != _me;
   }
 
-  // The co-parent is actively editing (holds the whole-schedule lock or a day lock).
-  bool get _partnerEditing {
-    final d = _data;
-    if (d == null) return false;
-    if (_scheduleLockedByOther) return true;
-    for (final l in d.dayLocks) {
-      if (l.by.toLowerCase() != _me) return true;
-    }
-    return false;
-  }
+  // The co-parent is actively editing the whole schedule (template / AI / pattern length).
+  // Per-day edits no longer hold a lock — they just stream in live.
+  bool get _partnerEditing => _scheduleLockedByOther;
 
   // The co-parent has the editor open (heartbeat fresh) but isn't mid-edit.
   bool get _partnerHere => _data?.partnerPresent(_me) ?? false;
@@ -284,29 +288,13 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       _toast('Your co-parent is editing the whole schedule right now.');
       return;
     }
-    final lockedBy = d.dayLockedBy(weekIndex, dayIndex);
-    if (lockedBy != null && lockedBy.toLowerCase() != _me) {
-      _toast('Your co-parent is editing that day right now.');
-      return;
-    }
     HapticFeedback.selectionClick();
-    // Presence lock for the day (best-effort; the version check is the real guard).
-    final got = await _svc.acquireDayLock(weekIndex, dayIndex);
-    if (!got) {
-      _toast('Your co-parent just started editing that day.');
-      await _refresh();
-      return;
-    }
-    if (!mounted) return;
-    // Keep the day-lock alive while the sheet is open (TTL is 45s; re-acquiring extends it)
-    // so a long edit — picking a location, typing an address — never drops the live lock.
-    final beat = Timer.periodic(const Duration(seconds: 30), (_) => _svc.acquireDayLock(weekIndex, dayIndex));
     await _openDayEditor(weekIndex, dayIndex);
-    beat.cancel();
-    await _svc.releaseDayLock(weekIndex, dayIndex);
-    await _refresh();
   }
 
+  // The day sheet AUTO-COMMITS — no Save button. Every change (parent / time / location)
+  // is sent live via [_commitDay]; the cell updates as soon as the server confirms. Closing
+  // just dismisses (anything in flight finishes on its own).
   Future<void> _openDayEditor(int weekIndex, int dayIndex) async {
     final d0 = _data;
     if (d0 == null) return;
@@ -322,8 +310,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       transferLocationName: existing?.transferLocationName,
       transferAddress: existing?.transferAddress,
     );
-    DayEditCommit? latest;
-    final saved = await showModalBottomSheet<bool>(
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -351,11 +338,9 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
                     data: input,
                     baseline: null,
                     pois: _pois,
-                    onCommit: (c) => latest = c,
-                    onClose: () => Navigator.of(ctx).pop(false),
+                    onCommit: (c) => _commitDay(weekIndex, dayIndex, c),
+                    onClose: () => Navigator.of(ctx).pop(),
                   ),
-                  const SizedBox(height: 16),
-                  _sheetSaveButton(ctx, 'Save', () => Navigator.of(ctx).pop(true)),
                 ],
               ),
             ),
@@ -363,29 +348,65 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         );
       },
     );
+    // Flush anything still queued the moment the sheet closes.
+    _flushDayCommits();
+  }
 
-    if (saved != true || !mounted) return;
-    final c = latest;
-    if (c == null) return; // opened, no change
-    final d = _data;
-    if (d == null) return;
-    setState(() => _busy = true);
-    final res = await _svc.upsertDay(
-      d.version,
-      LiveDay(
-        weekIndex: weekIndex,
-        dayIndex: dayIndex,
-        parentAssignment: c.parent,
-        transferTime: c.transferTime == null ? null : _todStr(c.transferTime!),
-        transferEndTime: c.transferEndTime == null ? null : _todStr(c.transferEndTime!),
-        transferLatitude: c.location?.latitude,
-        transferLongitude: c.location?.longitude,
-        transferLocationName: c.location?.name,
-        transferAddress: c.location?.address,
-      ),
+  // ── Auto-commit pipeline ──────────────────────────────────────────────────────
+  // Each change coalesces into _pendingDays (latest per day wins), debounced so typing an
+  // address doesn't fire per keystroke, then drained serially so versions stay consistent.
+  void _commitDay(int weekIndex, int dayIndex, DayEditCommit c) {
+    _pendingDays['$weekIndex,$dayIndex'] = LiveDay(
+      weekIndex: weekIndex,
+      dayIndex: dayIndex,
+      parentAssignment: c.parent,
+      transferTime: c.transferTime == null ? null : _todStr(c.transferTime!),
+      transferEndTime: c.transferEndTime == null ? null : _todStr(c.transferEndTime!),
+      transferLatitude: c.location?.latitude,
+      transferLongitude: c.location?.longitude,
+      transferLocationName: c.location?.name,
+      transferAddress: c.location?.address,
     );
-    if (mounted) setState(() => _busy = false);
-    await _applyResult(res);
+    if (mounted) setState(() => _saving = true);
+    _commitDebounce?.cancel();
+    _commitDebounce = Timer(const Duration(milliseconds: 450), _drainDayCommits);
+  }
+
+  void _flushDayCommits() {
+    _commitDebounce?.cancel();
+    _drainDayCommits();
+  }
+
+  Future<void> _drainDayCommits() async {
+    if (_sendingDays) return;
+    _sendingDays = true;
+    var guard = 0;
+    while (_pendingDays.isNotEmpty && guard++ < 50) {
+      final key = _pendingDays.keys.first;
+      final day = _pendingDays.remove(key)!;
+      final res = await _svc.upsertDay(_data?.version ?? 0, day);
+      if (!mounted) { _sendingDays = false; return; }
+      if (res.op == LiveOp.ok) {
+        final wasAgreed = _data?.isAgreed ?? false;
+        setState(() => _data = res.data);
+        if (wasAgreed && !(res.data?.isAgreed ?? false)) {
+          _toast("Your change reopened the schedule — you'll both need to Agree again.");
+        }
+      } else if (res.op == LiveOp.conflict) {
+        await _refresh(); // pick up the new version, then resend this day
+        _pendingDays[key] = day;
+      } else {
+        await _applyResult(res); // locked / error → message, drop it
+      }
+    }
+    _sendingDays = false;
+    if (mounted) {
+      setState(() { _saving = false; _savedFlash = true; });
+      _savedFlashTimer?.cancel();
+      _savedFlashTimer = Timer(const Duration(seconds: 2), () {
+        if (mounted) setState(() => _savedFlash = false);
+      });
+    }
   }
 
   // ── Overrides (special days) ──────────────────────────────────────────────────
@@ -605,19 +626,6 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         ),
       );
 
-  Widget _sheetSaveButton(BuildContext ctx, String label, VoidCallback onTap) => SizedBox(
-        width: double.infinity,
-        height: 50,
-        child: ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primaryBlue,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-          onPressed: onTap,
-          child: Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-        ),
-      );
-
   // ── build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -707,11 +715,30 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
             child: Text('Custody Schedule',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: palette.textPrimary)),
           ),
-          if (_busy)
-            const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+          _saveStatus(context),
         ],
       ),
     );
+  }
+
+  // Live "Saving… / Saved" pill (auto-commit) — also covers bulk ops via _busy.
+  Widget _saveStatus(BuildContext context) {
+    final palette = context.palette;
+    if (_saving || _busy) {
+      return Row(mainAxisSize: MainAxisSize.min, children: [
+        const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+        const SizedBox(width: 6),
+        Text('Saving…', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+      ]);
+    }
+    if (_savedFlash) {
+      return Row(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.check_circle, size: 16, color: AppColors.successGreen),
+        const SizedBox(width: 4),
+        const Text('Saved', style: TextStyle(fontSize: 12, color: AppColors.successGreen)),
+      ]);
+    }
+    return const SizedBox(width: 0, height: 18);
   }
 
   Widget _statusBar(BuildContext context, LiveScheduleData d) {
@@ -874,8 +901,6 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     final cell = d.dayAt(weekIndex, dayIndex);
     final parent = cell?.parentAssignment ?? 'None';
     final time = _tod(cell?.transferTime);
-    final lockedBy = d.dayLockedBy(weekIndex, dayIndex);
-    final lockedByOther = lockedBy != null && lockedBy.toLowerCase() != _me;
 
     return GestureDetector(
       onTap: () => _tapDay(weekIndex, dayIndex),
@@ -886,17 +911,12 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         padding: const EdgeInsets.all(4),
         decoration: BoxDecoration(
           color: parent == 'None' ? Colors.transparent : _fill(parent),
-          border: Border.all(
-            color: lockedByOther ? AppColors.warningAmber : palette.border,
-            width: lockedByOther ? 2 : 1,
-          ),
+          border: Border.all(color: palette.border, width: 1),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Stack(
           children: [
-            if (lockedByOther)
-              const Align(alignment: Alignment.topCenter, child: Icon(Icons.lock, size: 12, color: AppColors.warningAmber))
-            else if (parent == 'None')
+            if (parent == 'None')
               Center(
                 child: Text('Tap to\nedit', textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 9, color: palette.textSecondary)),
