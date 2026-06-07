@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # Version line continues the published CoHarmony app (App Store / Play). Source of truth —
 # build-name = CFBundleShortVersionString / Android versionName; build-number = CFBundleVersion
 # / Android versionCode. Bump the +N every upload (must exceed the last store build).
-version: 3.01.59+128
+version: 3.01.59+129
 
 environment:
   sdk: ^3.12.1
@@ -96,6 +96,9 @@ dev_dependencies:
   # (assets/branding/app_icon_1024.png — the CoHarmony brand mark).
   flutter_launcher_icons: ^0.14.1
 
+  # Generates the native launch/splash screen (logo centered on the theme background).
+  flutter_native_splash: ^2.4.4
+
 # App launcher icon generation — run `dart run flutter_launcher_icons`.
 flutter_launcher_icons:
   image_path: "assets/branding/app_icon_1024.png"
@@ -103,6 +106,23 @@ flutter_launcher_icons:
   ios: true
   remove_alpha_ios: true   # App Store icons must be opaque (no alpha channel)
   background_color_ios: "#000000"
+
+# Native splash screen — the brand mark centered on the theme background. Native splash
+# follows the SYSTEM light/dark appearance (it shows before Flutter/the in-app theme loads).
+# Regenerate after changes: `dart run flutter_native_splash:create`.
+flutter_native_splash:
+  color: "#F5F7FA"        # AppColors.backgroundLight
+  color_dark: "#0A0F1C"   # AppColors.backgroundDark
+  image: assets/branding/app_icon_1024.png
+  image_dark: assets/branding/app_icon_1024.png
+  android: true
+  ios: true
+  # Android 12+ uses the system splash API (icon masked into a circle on the background).
+  android_12:
+    color: "#F5F7FA"
+    color_dark: "#0A0F1C"
+    image: assets/branding/app_icon_1024.png
+    image_dark: assets/branding/app_icon_1024.png
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
