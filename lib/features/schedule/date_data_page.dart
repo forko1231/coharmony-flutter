@@ -101,6 +101,7 @@ class _DateDataPageState extends State<DateDataPage> {
         origDay: s.day,
         origYear: s.year,
         visibleToKids: s.visibleToKids,
+        scheduleId: s.scheduleId,
       ));
     }
 
@@ -288,9 +289,10 @@ class _DateDataPageState extends State<DateDataPage> {
     );
     if (result == null || !mounted) return;
     setState(() => _busy = true);
-    // Delete the original first (use its original date for recurring), then recreate.
+    // Delete the original first (by id, so a co-parent's event resolves), then recreate.
     final ok = await ServiceLocator.schedule.deleteSchedules([
-      ScheduleDeleteRequest(month: e.origMonth, day: e.origDay, year: e.origYear, tag: e.tag),
+      ScheduleDeleteRequest(
+          month: e.origMonth, day: e.origDay, year: e.origYear, tag: e.tag, scheduleId: e.scheduleId),
     ]);
     if (!ok) {
       if (mounted) {
@@ -308,7 +310,8 @@ class _DateDataPageState extends State<DateDataPage> {
     setState(() => _busy = true);
     try {
       final ok = await ServiceLocator.schedule.deleteSchedules([
-        ScheduleDeleteRequest(month: e.origMonth, day: e.origDay, year: e.origYear, tag: e.tag),
+        ScheduleDeleteRequest(
+            month: e.origMonth, day: e.origDay, year: e.origYear, tag: e.tag, scheduleId: e.scheduleId),
       ]);
       if (ok) {
         _loadedMonth = 0; // force events refetch
@@ -689,6 +692,7 @@ class _DayEvent {
     required this.origDay,
     required this.origYear,
     this.visibleToKids = true,
+    this.scheduleId = 0,
   });
   final String tag;
   final TimeOfDay start;
@@ -701,4 +705,5 @@ class _DayEvent {
   final int origDay;
   final int origYear;
   final bool visibleToKids;
+  final int scheduleId;
 }

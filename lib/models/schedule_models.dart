@@ -286,13 +286,22 @@ class ScheduleDeleteRequest {
     required this.day,
     required this.year,
     this.tag = '',
+    this.scheduleId,
   });
   final int month;
   final int day;
   final int year;
   final String tag;
-  Map<String, dynamic> toJson() =>
-      {'month': month, 'day': day, 'year': year, 'tag': tag};
+  // When set, the server deletes by id with couple authorization (so a co-parent can delete
+  // a shared event they don't own). Falls back to the (date,tag) match when null.
+  final int? scheduleId;
+  Map<String, dynamic> toJson() => {
+        'month': month,
+        'day': day,
+        'year': year,
+        'tag': tag,
+        if (scheduleId != null && scheduleId! > 0) 'scheduleId': scheduleId,
+      };
 }
 
 class CustodyProposalResponseItem {

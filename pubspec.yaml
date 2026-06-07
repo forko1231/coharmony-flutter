@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # Version line continues the published CoHarmony app (App Store / Play). Source of truth —
 # build-name = CFBundleShortVersionString / Android versionName; build-number = CFBundleVersion
 # / Android versionCode. Bump the +N every upload (must exceed the last store build).
-version: 3.01.59+125
+version: 3.01.59+126
 
 environment:
   sdk: ^3.12.1
