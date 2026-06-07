@@ -394,9 +394,20 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         }
       } else if (res.op == LiveOp.conflict) {
         await _refresh(); // pick up the new version, then resend this day
+        // If the co-parent just took the whole-schedule lock (template/AI), stop —
+        // resending would just conflict until they're done. Their work wins; drop ours.
+        if (_scheduleLockedByOther) {
+          _pendingDays.clear();
+          _toast('Your co-parent is editing the whole schedule — try again in a moment.');
+          break;
+        }
         _pendingDays[key] = day;
+      } else if (res.op == LiveOp.locked || res.op == LiveOp.lockedDay) {
+        _pendingDays.clear();
+        await _applyResult(res); // schedule/day locked → message, drop
+        break;
       } else {
-        await _applyResult(res); // locked / error → message, drop it
+        await _applyResult(res); // error → message, drop it
       }
     }
     _sendingDays = false;
