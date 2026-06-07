@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../models/custody_models.dart';
 import 'api_client.dart';
+import 'preferences.dart';
 import 'websocket_service.dart';
 
 /// Client for the live custody-schedule API (`/api/schedule/live`). Separate from
@@ -74,6 +75,21 @@ class LiveScheduleService {
   Future<ActiveProposalResponse?> getActiveProposal() async =>
       ActiveProposalResponse(hasActiveProposal: false);
 
+  // Lightweight agreement state for the calendars' "not agreed yet" indicators.
+  Future<LiveAgreement> getAgreement() async {
+    final d = (await get()).data;
+    if (d == null || d.days.isEmpty) return const LiveAgreement();
+    final me = Preferences.getString('email').toLowerCase();
+    final a = d.agreedByA?.toLowerCase();
+    final b = d.agreedByB?.toLowerCase();
+    return LiveAgreement(
+      hasSchedule: true,
+      agreed: d.isAgreed,
+      iAgreed: a == me || b == me,
+      partnerAgreed: (a != null && a != me) || (b != null && b != me),
+    );
+  }
+
   Future<LiveResult> upsertDay(int baseVersion, LiveDay day) =>
       _send('POST', 'day', {'baseVersion': baseVersion, ...day.fields()});
 
@@ -142,6 +158,24 @@ class LiveScheduleService {
 }
 
 enum LiveOp { ok, conflict, locked, lockedDay, noPartner, error }
+
+/// Agreement state for the current user, for the calendars' "not agreed yet" indicators.
+class LiveAgreement {
+  final bool hasSchedule;
+  final bool agreed; // both parents agreed
+  final bool iAgreed;
+  final bool partnerAgreed;
+  const LiveAgreement({
+    this.hasSchedule = false,
+    this.agreed = false,
+    this.iAgreed = false,
+    this.partnerAgreed = false,
+  });
+
+  /// Show the "you haven't agreed" indicator: there's a schedule, it's not fully agreed,
+  /// and I personally haven't agreed to the current version.
+  bool get needsMyAgreement => hasSchedule && !agreed && !iAgreed;
+}
 
 class LiveResult {
   final LiveOp op;

@@ -4,6 +4,7 @@ import '../../models/financial_models.dart';
 import '../../models/schedule_models.dart';
 import '../../services/custody_templates/pending_template_service.dart';
 import '../../services/holiday_resolver.dart';
+import '../../services/live_schedule_service.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
@@ -33,6 +34,7 @@ class _SchedulePageState extends State<SchedulePage> {
 
   ApprovedScheduleResponse? _approved;
   ActiveProposalResponse? _active;
+  LiveAgreement? _agreement;
   List<ScheduleItem> _events = const []; // non-custodial only
   List<FCharge> _charges = const []; // current user's charges
   bool _isViewingProposal = false;
@@ -65,11 +67,13 @@ class _SchedulePageState extends State<SchedulePage> {
         ServiceLocator.financial.getCharges(),
         ServiceLocator.liveSchedule.getApprovedSchedule(),
         ServiceLocator.liveSchedule.getActiveProposal(),
+        ServiceLocator.liveSchedule.getAgreement(),
       ]);
       final allItems = results[0] as List<ScheduleItem>;
       final allCharges = results[1] as List<FCharge>;
       _approved = results[2] as ApprovedScheduleResponse?;
       _active = results[3] as ActiveProposalResponse?;
+      _agreement = results[4] as LiveAgreement?;
 
       _events = allItems.where((s) => !s.isCustodial).toList();
       _charges = allCharges
@@ -329,6 +333,13 @@ class _SchedulePageState extends State<SchedulePage> {
                               children: [
                                 if (hasProposal) ...[
                                   _proposalBanner(context),
+                                  const SizedBox(height: 20),
+                                ],
+                                if (_agreement?.needsMyAgreement ?? false) ...[
+                                  _agreementBanner(context, mine: true),
+                                  const SizedBox(height: 20),
+                                ] else if ((_agreement?.iAgreed ?? false) && !(_agreement?.partnerAgreed ?? false)) ...[
+                                  _agreementBanner(context, mine: false),
                                   const SizedBox(height: 20),
                                 ],
                                 _dayHeaders(context),
@@ -798,6 +809,49 @@ class _SchedulePageState extends State<SchedulePage> {
             SizedBox(width: 8),
             Text('Manage Custody Schedule',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // "You haven't agreed yet" (mine) / "Waiting for your co-parent" (!mine).
+  Widget _agreementBanner(BuildContext context, {required bool mine}) {
+    final palette = context.palette;
+    final accent = mine ? AppColors.dangerRed : AppColors.warningAmber;
+    final title = mine ? "You haven't agreed to this schedule yet" : 'Waiting for your co-parent to agree';
+    final subtitle = mine
+        ? 'Tap to review the current schedule and agree.'
+        : "You've agreed — they still need to review and agree.";
+    return GestureDetector(
+      onTap: () => _openManageCustody(context),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: context.isDark ? 0.18 : 0.10),
+          border: Border.all(color: accent.withValues(alpha: 0.6)),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(color: accent.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(10)),
+              child: Icon(mine ? Icons.error_outline : Icons.hourglass_top, size: 22, color: accent),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+                ],
+              ),
+            ),
+            if (mine) Icon(Icons.chevron_right, color: palette.textSecondary),
           ],
         ),
       ),

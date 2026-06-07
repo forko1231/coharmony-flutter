@@ -10,6 +10,7 @@ import '../../services/analytics_service.dart';
 import '../../services/custody_templates/pending_template_service.dart';
 import '../../services/holiday_resolver.dart';
 import '../../services/preferences.dart';
+import '../../services/live_schedule_service.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
@@ -42,6 +43,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
   String _email = '';
 
   ApprovedScheduleResponse? _approved;
+  LiveAgreement? _agreement;
   ActiveProposalResponse? _activeProposal;
   List<ScheduleItem> _events = const [];
   List<FCharge> _monthCharges = const []; // all charges in current month (calendar borders)
@@ -189,6 +191,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
     try {
       _approved = await ServiceLocator.liveSchedule.getApprovedSchedule();
       _activeProposal = await ServiceLocator.liveSchedule.getActiveProposal();
+      _agreement = await ServiceLocator.liveSchedule.getAgreement();
     } catch (_) {}
   }
 
@@ -565,8 +568,22 @@ class _MainMenuPageState extends State<MainMenuPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Calendar',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Calendar',
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                        // Little red dot when you haven't agreed to the current schedule yet.
+                        if (_agreement?.needsMyAgreement ?? false) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: const BoxDecoration(color: AppColors.dangerRed, shape: BoxShape.circle),
+                          ),
+                        ],
+                      ],
+                    ),
                     const SizedBox(height: 4),
                     Text('${_monthsLong[_now.month - 1]} ${_now.year}',
                         style: TextStyle(fontSize: 14, color: palette.textSecondary)),
