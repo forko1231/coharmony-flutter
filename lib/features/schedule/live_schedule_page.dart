@@ -143,20 +143,24 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     }
   }
 
+  // True while we have unsent / in-flight day edits — refreshes must not stomp our
+  // optimistic local state with stale server data during that window.
+  bool get _localDirty => _pendingDays.isNotEmpty || _sendingDays || (_commitDebounce?.isActive ?? false);
+
   // Presence heartbeat — silent; just refresh our copy of the schedule (incl. who's here).
   Future<void> _beat() async {
-    if (_busy || !mounted) return;
+    if (_busy || _localDirty || !mounted) return;
     final r = await _svc.presenceHeartbeat();
-    if (!mounted || r.data == null) return;
+    if (!mounted || r.data == null || _localDirty) return;
     setState(() => _data = r.data);
   }
 
   // Silent refresh used by the WS ping / poll — don't flicker the spinner, and don't
-  // stomp the screen while the user has a mutating call in flight.
+  // stomp the screen while the user has a mutating call (or unsynced local edit) in flight.
   Future<void> _refresh() async {
-    if (_busy || !mounted) return;
+    if (_busy || _localDirty || !mounted) return;
     final r = await _svc.get();
-    if (!mounted || r.data == null) return;
+    if (!mounted || r.data == null || _localDirty) return;
     setState(() => _data = r.data);
   }
 
@@ -348,7 +352,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   // Each change coalesces into _pendingDays (latest per day wins), debounced so typing an
   // address doesn't fire per keystroke, then drained serially so versions stay consistent.
   void _commitDay(int weekIndex, int dayIndex, DayEditCommit c) {
-    _pendingDays['$weekIndex,$dayIndex'] = LiveDay(
+    final day = LiveDay(
       weekIndex: weekIndex,
       dayIndex: dayIndex,
       parentAssignment: c.parent,
@@ -359,9 +363,16 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       transferLocationName: c.location?.name,
       transferAddress: c.location?.address,
     );
-    if (mounted) setState(() => _saving = true);
+    _pendingDays['$weekIndex,$dayIndex'] = day;
+    // Optimistic: recolor the cell immediately; the network write follows.
+    if (mounted) {
+      setState(() {
+        if (_data != null) _data = _data!.withDay(day);
+        _saving = true;
+      });
+    }
     _commitDebounce?.cancel();
-    _commitDebounce = Timer(const Duration(milliseconds: 450), _drainDayCommits);
+    _commitDebounce = Timer(const Duration(milliseconds: 150), _drainDayCommits);
   }
 
   void _flushDayCommits() {
@@ -385,7 +396,11 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
           _toast("Your change reopened the schedule — you'll both need to Agree again.");
         }
       } else if (res.op == LiveOp.conflict) {
-        await _refresh(); // pick up the new version, then resend this day
+        // Fetch the latest version directly (can't use _refresh — it's gated while dirty),
+        // then resend this day on top of it.
+        final latest = await _svc.get();
+        if (!mounted) { _sendingDays = false; return; }
+        if (latest.data != null) setState(() => _data = latest.data);
         // If the co-parent just took the whole-schedule lock (template/AI), stop —
         // resending would just conflict until they're done. Their work wins; drop ours.
         if (_scheduleLockedByOther) {
@@ -650,13 +665,15 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       },
       child: Scaffold(
         backgroundColor: palette.background,
-        body: SafeArea(
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _noPartner
-                  ? _centeredMessage(context, 'Link your co-parent first to start building your schedule together.')
-                  : _body(context),
-        ),
+        // No outer SafeArea — the docked panel must reach the true screen bottom (no gap
+        // under it on iOS). Insets are handled per-section: header (top), scroll (bottom),
+        // FAB (bottom), and the panel's own SafeArea(top:false).
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _noPartner
+                ? SafeArea(
+                    child: _centeredMessage(context, 'Link your co-parent first to start building your schedule together.'))
+                : _body(context),
       ),
     );
   }
@@ -672,9 +689,11 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   Widget _body(BuildContext context) {
     final d = _data!;
     final docked = _dockedChild != null;
+    final safeBottom = MediaQuery.viewPaddingOf(context).bottom;
     // When the panel is docked, reserve room at the bottom of the scroll so the LAST week /
     // overrides can scroll clear above the panel (panel is capped at 55% of the screen).
-    final bottomPad = docked ? MediaQuery.of(context).size.height * 0.55 + 24 : 96.0;
+    // Otherwise pad for the FAB + the home-indicator inset (no outer SafeArea anymore).
+    final bottomPad = docked ? MediaQuery.of(context).size.height * 0.55 + 24 : 96.0 + safeBottom;
     return Stack(
       children: [
         Column(
@@ -722,7 +741,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         if (!docked)
           Positioned(
             right: 20,
-            bottom: 24,
+            bottom: 24 + safeBottom,
             child: _EditorActionMenu(onAi: _openAi, onTemplates: _openTemplates, onHelp: _showGuide),
           ),
       ],
@@ -764,7 +783,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   Widget _header(BuildContext context) {
     final palette = context.palette;
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      padding: EdgeInsets.fromLTRB(16, MediaQuery.viewPaddingOf(context).top + 8, 16, 12),
       child: Row(
         children: [
           if (!widget.isOnboarding)

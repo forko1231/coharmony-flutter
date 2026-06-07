@@ -225,6 +225,30 @@ class LiveScheduleData {
     return emailA.toLowerCase() == me ? emailB : emailA;
   }
 
+  // Optimistic local update: return a copy with [day] upserted (same version) so the grid
+  // can recolor instantly while the network write is in flight.
+  LiveScheduleData withDay(LiveDay day) => LiveScheduleData(
+        liveScheduleId: liveScheduleId,
+        emailA: emailA,
+        emailB: emailB,
+        patternLength: patternLength,
+        version: version,
+        status: status,
+        agreedByA: agreedByA,
+        agreedByB: agreedByB,
+        agreedAtUtc: agreedAtUtc,
+        locked: locked,
+        presentA: presentA,
+        presentB: presentB,
+        days: [
+          for (final d in days)
+            if (!(d.weekIndex == day.weekIndex && d.dayIndex == day.dayIndex)) d,
+          day,
+        ],
+        overrides: overrides,
+        dayLocks: dayLocks,
+      );
+
   LiveDay? dayAt(int weekIndex, int dayIndex) {
     for (final d in days) {
       if (d.weekIndex == weekIndex && d.dayIndex == dayIndex) return d;
