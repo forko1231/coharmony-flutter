@@ -65,6 +65,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   bool _sendingDays = false;
   bool _saving = false;
   bool _savedFlash = false;
+  bool _catchingUp = false; // leaving the editor: blocking loader while pending saves finish
   int? _selWeek; // the day whose panel is open — shown with a blue border
   int? _selDay;
   // The docked editor panel (day or override). Non-modal: the grid stays scrollable +
@@ -622,6 +623,8 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   // lost). Flush the queue, then wait for it to settle (with the blocking loader showing).
   Future<void> _flushAndWait() async {
     _commitDebounce?.cancel();
+    if (!(_sendingDays || _busy || _pendingDays.isNotEmpty)) return; // nothing behind
+    if (mounted) setState(() => _catchingUp = true);
     if (_pendingDays.isNotEmpty && !_sendingDays) {
       unawaited(_drainDayCommits());
     }
@@ -629,6 +632,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     while ((_sendingDays || _busy || _pendingDays.isNotEmpty) && mounted && guard++ < 200) {
       await Future.delayed(const Duration(milliseconds: 50));
     }
+    if (mounted) setState(() => _catchingUp = false);
   }
 
   // ── build ─────────────────────────────────────────────────────────────────
@@ -712,11 +716,8 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         // Docked editor panel (day / override) — non-modal; grid stays usable above it.
         if (docked)
           Positioned(left: 0, right: 0, bottom: 0, child: _dockedPanel(context)),
-        // Block input while a request is in flight so saves can't overlap / be lost.
-        if (_inFlight)
-          const Positioned.fill(
-            child: AbsorbPointer(child: ColoredBox(color: Color(0x14000000))),
-          ),
+        // Only when LEAVING: block + show a loader while we catch up on pending saves.
+        if (_catchingUp) _catchUpOverlay(context),
         // Floating action menu (AI / Templates / Help) — hidden while the panel is docked.
         if (!docked)
           Positioned(
@@ -1161,6 +1162,30 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
           ),
         ),
       ],
+    );
+  }
+
+  // Shown only while leaving the editor — blocks input and waits for pending saves to land.
+  Widget _catchUpOverlay(BuildContext context) {
+    final palette = context.palette;
+    return Positioned.fill(
+      child: AbsorbPointer(
+        child: Container(
+          color: Colors.black.withValues(alpha: 0.35),
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(color: palette.surfaceElevated, borderRadius: BorderRadius.circular(20)),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 3)),
+                const SizedBox(height: 16),
+                Text('Saving your changes…',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: palette.textPrimary)),
+              ]),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
