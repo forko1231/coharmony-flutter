@@ -65,8 +65,11 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   bool _sendingDays = false;
   bool _saving = false;
   bool _savedFlash = false;
-  int? _selWeek; // the day whose sheet is open — shown with a blue border behind the sheet
+  int? _selWeek; // the day whose panel is open — shown with a blue border
   int? _selDay;
+  // The docked editor panel (day or override). Non-modal: the grid stays scrollable +
+  // tappable so you can switch days without closing; only the ✕ dismisses it.
+  Widget? _dockedChild;
   Timer? _commitDebounce;
   Timer? _savedFlashTimer;
 
@@ -283,7 +286,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   // Open the template catalog from the floating menu (same flow as the inline CTA).
   Future<void> _openTemplates() => _useTemplate();
 
-  Future<void> _tapDay(int weekIndex, int dayIndex) async {
+  void _tapDay(int weekIndex, int dayIndex) {
     final d = _data;
     if (d == null) return;
     if (_scheduleLockedByOther) {
@@ -291,13 +294,13 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       return;
     }
     HapticFeedback.selectionClick();
-    await _openDayEditor(weekIndex, dayIndex);
+    _openDayEditor(weekIndex, dayIndex);
   }
 
-  // The day sheet AUTO-COMMITS — no Save button. Every change (parent / time / location)
-  // is sent live via [_commitDay]; the cell updates as soon as the server confirms. Closing
-  // just dismisses (anything in flight finishes on its own).
-  Future<void> _openDayEditor(int weekIndex, int dayIndex) async {
+  // The day editor is a DOCKED panel — not a modal. The grid stays scrollable/tappable so
+  // you can switch to another day without closing (tapping just rebuilds the panel for that
+  // day). It AUTO-COMMITS every change live (no Save button); only the ✕ dismisses it.
+  void _openDayEditor(int weekIndex, int dayIndex) {
     final d0 = _data;
     if (d0 == null) return;
     final existing = d0.dayAt(weekIndex, dayIndex);
@@ -312,50 +315,31 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       transferLocationName: existing?.transferLocationName,
       transferAddress: existing?.transferAddress,
     );
-    // Mark the day selected so it gets a blue border behind the sheet (a lighter barrier
-    // keeps the grid visible above the sheet, like the old docked editor).
-    setState(() { _selWeek = weekIndex; _selDay = dayIndex; });
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.25),
-      builder: (ctx) {
-        final palette = ctx.palette;
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Container(
-            decoration: BoxDecoration(
-              color: palette.surfaceElevated,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _grabber(),
-                  DayEditorView(
-                    weekIndex: weekIndex,
-                    dayIndex: dayIndex,
-                    title: (d0.patternLength) > 1
-                        ? 'Week ${weekIndex + 1} · ${_dayNames[dayIndex]}'
-                        : _dayNames[dayIndex],
-                    data: input,
-                    baseline: null,
-                    pois: _pois,
-                    onCommit: (c) => _commitDay(weekIndex, dayIndex, c),
-                    onClose: () => Navigator.of(ctx).pop(),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-    // Clear the selection highlight + flush anything still queued the moment it closes.
-    if (mounted) setState(() { _selWeek = null; _selDay = null; });
+    setState(() {
+      _selWeek = weekIndex;
+      _selDay = dayIndex;
+      _dockedChild = DayEditorView(
+        // Unique key per (week, day) so switching days rebuilds the editor State with the
+        // new day's data instead of reusing the previous day's fields.
+        key: ValueKey('day-$weekIndex-$dayIndex'),
+        weekIndex: weekIndex,
+        dayIndex: dayIndex,
+        title: (d0.patternLength) > 1
+            ? 'Week ${weekIndex + 1} · ${_dayNames[dayIndex]}'
+            : _dayNames[dayIndex],
+        data: input,
+        baseline: null,
+        pois: _pois,
+        onCommit: (c) => _commitDay(weekIndex, dayIndex, c),
+        onClose: _closeDock,
+      );
+    });
+  }
+
+  // Close the docked panel (only entry point is the ✕). Flush any queued commit.
+  void _closeDock() {
+    if (!mounted) return;
+    setState(() { _dockedChild = null; _selWeek = null; _selDay = null; });
     _flushDayCommits();
   }
 
@@ -428,7 +412,9 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   }
 
   // ── Overrides (special days) ──────────────────────────────────────────────────
-  Future<void> _openOverrideEditor({LiveOverride? existing}) async {
+  // Also a docked panel. Unlike the day editor this keeps its Add/Update button (it builds
+  // a record around a date), then applies + closes.
+  void _openOverrideEditor({LiveOverride? existing}) {
     if (_scheduleLockedByOther) {
       _toast('Your co-parent is editing the whole schedule right now.');
       return;
@@ -452,42 +438,23 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
             transferLocationName: existing.transferLocationName,
             transferAddress: existing.transferAddress,
           );
-    final result = await showModalBottomSheet<OverrideDayEditResult>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        final palette = ctx.palette;
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Container(
-            decoration: BoxDecoration(
-              color: palette.surfaceElevated,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _grabber(),
-                  OverrideEditorView(
-                    existingDateKey: existing?.dateKey,
-                    existing: exDto,
-                    baseline: null,
-                    pois: _pois,
-                    onApply: (r) => Navigator.of(ctx).pop(r),
-                    onClose: () => Navigator.of(ctx).pop(),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
+    setState(() {
+      _selWeek = null;
+      _selDay = null;
+      _dockedChild = OverrideEditorView(
+        key: ValueKey('override-${existing?.dateKey ?? 'new'}'),
+        existingDateKey: existing?.dateKey,
+        existing: exDto,
+        baseline: null,
+        pois: _pois,
+        onApply: (r) => _applyOverrideResult(existing, r),
+        onClose: _closeDock,
+      );
+    });
+  }
 
-    if (result == null || !mounted) return;
+  Future<void> _applyOverrideResult(LiveOverride? existing, OverrideDayEditResult result) async {
+    _closeDock();
     final d = _data;
     if (d == null) return;
     setState(() => _busy = true);
@@ -670,6 +637,10 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
 
   Widget _body(BuildContext context) {
     final d = _data!;
+    final docked = _dockedChild != null;
+    // When the panel is docked, reserve room at the bottom of the scroll so the LAST week /
+    // overrides can scroll clear above the panel (panel is capped at 55% of the screen).
+    final bottomPad = docked ? MediaQuery.of(context).size.height * 0.55 + 24 : 96.0;
     return Stack(
       children: [
         Column(
@@ -677,7 +648,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
             _header(context),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+                padding: EdgeInsets.fromLTRB(16, 12, 16, bottomPad),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -708,13 +679,49 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         ),
         // Live whole-schedule lock overlay.
         if (_scheduleLockedByOther) _lockOverlay(context, d),
-        // Floating action menu (AI / Templates / Help) — opens upward.
-        Positioned(
-          right: 20,
-          bottom: 24,
-          child: _EditorActionMenu(onAi: _openAi, onTemplates: _openTemplates, onHelp: _showGuide),
-        ),
+        // Docked editor panel (day / override) — non-modal; grid stays usable above it.
+        if (docked)
+          Positioned(left: 0, right: 0, bottom: 0, child: _dockedPanel(context)),
+        // Floating action menu (AI / Templates / Help) — hidden while the panel is docked.
+        if (!docked)
+          Positioned(
+            right: 20,
+            bottom: 24,
+            child: _EditorActionMenu(onAi: _openAi, onTemplates: _openTemplates, onHelp: _showGuide),
+          ),
       ],
+    );
+  }
+
+  // The docked editor panel: a bottom-anchored, NON-modal sheet (no barrier) so the grid
+  // above stays scrollable/tappable — you can switch days without closing. Capped height,
+  // scrolls internally, rides above the keyboard.
+  Widget _dockedPanel(BuildContext context) {
+    final palette = context.palette;
+    final maxH = MediaQuery.of(context).size.height * 0.55;
+    return Material(
+      color: palette.surfaceElevated,
+      elevation: 16,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      child: SafeArea(
+        top: false,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxH),
+          child: Padding(
+            padding: EdgeInsets.only(
+                left: 16, right: 16, top: 8, bottom: 12 + MediaQuery.of(context).viewInsets.bottom),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _grabber(),
+                  _dockedChild ?? const SizedBox.shrink(),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
