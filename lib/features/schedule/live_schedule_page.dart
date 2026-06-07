@@ -65,6 +65,8 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
   bool _sendingDays = false;
   bool _saving = false;
   bool _savedFlash = false;
+  int? _selWeek; // the day whose sheet is open — shown with a blue border behind the sheet
+  int? _selDay;
   Timer? _commitDebounce;
   Timer? _savedFlashTimer;
 
@@ -310,10 +312,14 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
       transferLocationName: existing?.transferLocationName,
       transferAddress: existing?.transferAddress,
     );
+    // Mark the day selected so it gets a blue border behind the sheet (a lighter barrier
+    // keeps the grid visible above the sheet, like the old docked editor).
+    setState(() { _selWeek = weekIndex; _selDay = dayIndex; });
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.25),
       builder: (ctx) {
         final palette = ctx.palette;
         return Padding(
@@ -348,7 +354,8 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         );
       },
     );
-    // Flush anything still queued the moment the sheet closes.
+    // Clear the selection highlight + flush anything still queued the moment it closes.
+    if (mounted) setState(() { _selWeek = null; _selDay = null; });
     _flushDayCommits();
   }
 
@@ -912,6 +919,7 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
     final cell = d.dayAt(weekIndex, dayIndex);
     final parent = cell?.parentAssignment ?? 'None';
     final time = _tod(cell?.transferTime);
+    final selected = _selWeek == weekIndex && _selDay == dayIndex;
 
     return GestureDetector(
       onTap: () => _tapDay(weekIndex, dayIndex),
@@ -922,7 +930,10 @@ class _LiveSchedulePageState extends State<LiveSchedulePage> with WidgetsBinding
         padding: const EdgeInsets.all(4),
         decoration: BoxDecoration(
           color: parent == 'None' ? Colors.transparent : _fill(parent),
-          border: Border.all(color: palette.border, width: 1),
+          border: Border.all(
+            color: selected ? AppColors.primaryBlue : palette.border,
+            width: selected ? 3 : 1,
+          ),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Stack(
