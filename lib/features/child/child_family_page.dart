@@ -73,12 +73,13 @@ class _ChildFamilyPageState extends State<ChildFamilyPage> {
     widgets.add(const SizedBox(height: 12));
     if (f.parent1Email?.isNotEmpty ?? false) {
       final name = (f.parent1Name?.isNotEmpty ?? false) ? f.parent1Name! : _displayName(f.parent1Email);
-      widgets.add(_memberCard(context, name, f.parent1Email!, 'Parent', AppColors.primaryBlue));
+      // Neutral colour for both parents — we don't know gender, so no blue/pink coding.
+      widgets.add(_memberCard(context, name, f.parent1Email!, 'Parent', AppColors.accentTeal));
       widgets.add(const SizedBox(height: 12));
     }
     if (f.parent2Email?.isNotEmpty ?? false) {
       final name = (f.parent2Name?.isNotEmpty ?? false) ? f.parent2Name! : _displayName(f.parent2Email);
-      widgets.add(_memberCard(context, name, f.parent2Email!, 'Parent', const Color(0xFFEC4899)));
+      widgets.add(_memberCard(context, name, f.parent2Email!, 'Parent', AppColors.accentTeal));
       widgets.add(const SizedBox(height: 12));
     }
     if (f.siblings.isNotEmpty) {
