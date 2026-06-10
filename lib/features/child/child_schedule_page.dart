@@ -385,30 +385,56 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
       final isToday = today.year == _year && today.month == _month && today.day == d;
       final selected = _selectedDay == d;
       final decoration = _custodyDecoration(custody);
-      final hasEvents = _eventsOn(DateTime(_year, _month, d)).isNotEmpty;
+      final eventCount = _eventsOn(DateTime(_year, _month, d)).length;
+      const eventColors = [Color(0xFFEF4444), Color(0xFFF59E0B), Color(0xFFEAB308)];
+      Color borderColor;
+      double borderWidth;
+      if (selected) {
+        borderColor = AppColors.accentPurple;
+        borderWidth = 3;
+      } else if (isToday) {
+        borderColor = AppColors.primaryBlue;
+        borderWidth = 3;
+      } else {
+        borderColor = palette.border;
+        borderWidth = 1;
+      }
       cells.add(Expanded(
+        // Day grid styled exactly like the PARENT schedule (64-tall cells, day# top-right,
+        // event dots bottom-left, radius 12). Child-only behaviour kept: tapping selects the
+        // day to reveal its details below (instead of pushing the parent's DateDataPage).
         child: GestureDetector(
           onTap: () => setState(() => _selectedDay = d),
           child: Container(
-            height: 50,
+            height: 64,
+            padding: const EdgeInsets.all(4),
             decoration: decoration.copyWith(
-              borderRadius: BorderRadius.circular(8),
-              color: decoration.gradient == null ? (decoration.color ?? palette.surfaceInput) : null,
-              border: selected
-                  ? Border.all(color: AppColors.accentPurple, width: 2)
-                  : (isToday ? Border.all(color: AppColors.primaryBlue, width: 2) : Border.all(color: palette.border)),
+              border: Border.all(color: borderColor, width: borderWidth),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Stack(
               children: [
-                Center(
-                    child: Text('$d',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: palette.textPrimary))),
-                if (hasEvents)
-                  const Align(
-                    alignment: Alignment.bottomCenter,
-                    child: Padding(
-                      padding: EdgeInsets.only(bottom: 4),
-                      child: Icon(Icons.circle, size: 6, color: AppColors.primaryBlue),
+                Align(
+                  alignment: Alignment.topRight,
+                  child: Text('$d',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                ),
+                if (eventCount > 0)
+                  Align(
+                    alignment: Alignment.bottomLeft,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (int k = 0; k < eventCount && k < 3; k++)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 2),
+                            child: Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(color: eventColors[k], shape: BoxShape.circle),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
               ],
