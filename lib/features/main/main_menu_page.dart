@@ -353,6 +353,19 @@ class _MainMenuPageState extends State<MainMenuPage> {
     return out;
   }
 
+  /// True if any event lands on [date] — its seeded date OR a recurrence. Used for the
+  /// mini-calendar dots, which previously only matched the exact seeded date (so repeating
+  /// events showed a dot on their first day only).
+  bool _eventOccursOn(DateTime date) {
+    for (final s in _events) {
+      if (s.tag.isEmpty) continue;
+      if (s.year == date.year && s.month == date.month && s.day == date.day) return true;
+      final rt = s.repeatType;
+      if (rt.isNotEmpty && rt.toLowerCase() != 'none' && _eventRepeatsOn(s, date)) return true;
+    }
+    return false;
+  }
+
   bool _eventRepeatsOn(ScheduleItem s, DateTime target) {
     final orig = DateTime(s.year, s.month, s.day);
     if (target.isBefore(orig)) return false;
@@ -661,7 +674,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
       });
       final hasCharge = charges.isNotEmpty;
       final anyUnpaid = charges.any((c) => !c.isPaid);
-      final hasEvent = _events.any((s) => s.year == _now.year && s.month == _now.month && s.day == day);
+      final hasEvent = _eventOccursOn(date); // exact date OR a recurrence (was exact-only)
       final isToday = day == _now.day;
 
       Color borderColor;
