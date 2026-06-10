@@ -98,7 +98,8 @@ class _ChildFamilyPageState extends State<ChildFamilyPage> {
   Widget _header(BuildContext context) {
     final palette = context.palette;
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      // Top inset accounts for the status bar / Dynamic Island.
+      padding: EdgeInsets.fromLTRB(16, MediaQuery.viewPaddingOf(context).top + 12, 16, 16),
       decoration: BoxDecoration(
         color: palette.surfaceElevated,
         boxShadow: [

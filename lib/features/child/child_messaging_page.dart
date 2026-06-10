@@ -119,7 +119,8 @@ class _ChildMessagingPageState extends State<ChildMessagingPage> {
       body: Column(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+            // Top inset accounts for the status bar / Dynamic Island (was a fixed 20).
+            padding: EdgeInsets.fromLTRB(24, MediaQuery.viewPaddingOf(context).top + 14, 24, 20),
             decoration: BoxDecoration(
               color: palette.surface,
               boxShadow: [

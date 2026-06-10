@@ -255,7 +255,8 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
       body: Column(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+            // Top inset accounts for the status bar / Dynamic Island (was a fixed 20).
+            padding: EdgeInsets.fromLTRB(24, MediaQuery.viewPaddingOf(context).top + 14, 24, 20),
             color: palette.surface,
             child: Stack(
               alignment: Alignment.center,
@@ -366,6 +367,7 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
                   children: [
                     Text('Calendar',
                         style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+                    const SizedBox(height: 4),
                     Text('${_monthsLong[_now.month - 1]} ${_now.year}',
                         style: TextStyle(fontSize: 14, color: palette.textSecondary)),
                   ],
@@ -385,7 +387,8 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          // Was 20 — matched to the parent main menu so the weekday row sits right under the header.
+          const SizedBox(height: 8),
           _miniMonth(context),
         ],
       ),

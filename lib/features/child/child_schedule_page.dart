@@ -270,7 +270,8 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   _dayHeadersRow(context),
-                                  const SizedBox(height: 20),
+                                  // Match the parent schedule — weekday row sits just above the grid.
+                                  const SizedBox(height: 12),
                                   _calendar(context),
                                   const SizedBox(height: 20),
                                   _legend(context),
