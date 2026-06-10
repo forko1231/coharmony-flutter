@@ -400,21 +400,18 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
     final lookup = _overrideLookup;
     final daysInMonth = DateTime(_now.year, _now.month + 1, 0).day;
     final firstWeekday = DateTime(_now.year, _now.month, 1).weekday % 7;
-    const labels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const headers = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+    // Day cells only (NO weekday labels in the grid — they go in a compact Row above it).
     final cells = <Widget>[];
-    for (final l in labels) {
-      cells.add(Center(
-          child: Text(l, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: palette.textSecondary))));
-    }
     for (int i = 0; i < firstWeekday; i++) {
-      cells.add(const SizedBox());
+      cells.add(const SizedBox.shrink());
     }
     for (int d = 1; d <= daysInMonth; d++) {
       final date = DateTime(_now.year, _now.month, d);
       final custody = _custodyFor(date, lookup);
       final isToday = d == _now.day;
       cells.add(Container(
-        margin: const EdgeInsets.all(2),
         decoration: _custodyDecoration(custody).copyWith(
           border: isToday ? Border.all(color: AppColors.primaryBlue, width: 3) : Border.all(color: palette.border),
           borderRadius: BorderRadius.circular(8),
@@ -428,12 +425,36 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
         ),
       ));
     }
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 7,
-      childAspectRatio: 1.1,
-      children: cells,
+
+    // Copied from the parent main menu's _miniMonth.
+    return Column(
+      children: [
+        Row(
+          children: headers
+              .map((h) => Expanded(
+                  child: Center(
+                      child: Text(h,
+                          style: TextStyle(
+                              fontSize: 12, height: 1.0, fontWeight: FontWeight.bold, color: palette.textSecondary)))))
+              .toList(),
+        ),
+        const SizedBox(height: 2),
+        // Explicit zero padding — otherwise GridView applies the ambient MediaQuery top inset
+        // (status bar / Dynamic Island), injecting a tall gap between the weekday row and the grid.
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.zero,
+          itemCount: cells.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 7,
+            mainAxisExtent: 44,
+            mainAxisSpacing: 4,
+            crossAxisSpacing: 4,
+          ),
+          itemBuilder: (_, i) => cells[i],
+        ),
+      ],
     );
   }
 
