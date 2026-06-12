@@ -661,7 +661,9 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
           ),
           // Tapping the name opens a call dropdown (voice / video) when calling
           // is enabled — keeps the header uncluttered vs. always-on buttons.
-          Expanded(child: _contactHeading(context)),
+          // Center (not stretch) so the popup anchors to the name+caret, not the
+          // full-width slot — otherwise the menu opens from the far-left edge.
+          Expanded(child: Center(child: _contactHeading(context))),
           Container(
             width: 44,
             height: 44,
@@ -713,7 +715,8 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
 
     return PopupMenuButton<bool>(
       tooltip: 'Call ${widget.contactName}',
-      offset: const Offset(0, 44),
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, 8),
       color: palette.surfaceElevated,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       onSelected: (video) => _startCall(video: video),
