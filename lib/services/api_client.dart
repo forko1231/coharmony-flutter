@@ -9,14 +9,14 @@ import 'token_service.dart';
 /// Port of `Services/BaseApiService.cs`.
 ///
 /// Talks to the backend at [baseUrl]. Mirrors the C# behaviour: bearer auth via
-/// [TokenService], a fresh `X-Request-ID` per request, automatic 401â†’refreshâ†’retry,
-/// and 402 (PaymentRequired) â†’ subscription-required redirect (suppressed during
+/// [TokenService], a fresh `X-Request-ID` per request, automatic 401→refresh→retry,
+/// and 402 (PaymentRequired) → subscription-required redirect (suppressed during
 /// onboarding and for child accounts via injected guards).
 ///
 /// Unlike the C# generic `PostAsync<TRequest,TResponse>`, Dart has no source-gen
 /// serializer, so these methods take an already-encodable [body] (typically a
 /// `request.toJson()` map) and return the decoded JSON (`Map`/`List`/primitive),
-/// or null on failure â€” matching the C# `default(T)` contract. Callers map the
+/// or null on failure — matching the C# `default(T)` contract. Callers map the
 /// result into model classes.
 class ApiClient {
   ApiClient({
@@ -47,7 +47,7 @@ class ApiClient {
 
   /// Fired when the session is DEFINITIVELY dead: a 401 was answered with a
   /// refresh attempt that the server explicitly rejected (tokens already
-  /// wiped). NOT fired on transport failures â€” those are transient and the
+  /// wiped). NOT fired on transport failures — those are transient and the
   /// next call simply retries the refresh. Debounced like 402.
   final void Function()? onAuthFailure;
 
@@ -80,7 +80,7 @@ class ApiClient {
         }
         return false;
       case RefreshOutcome.rejected:
-        // Session definitively dead â€” the server rejected the refresh token
+        // Session definitively dead — the server rejected the refresh token
         // (stored tokens already wiped). Route back to login (debounced).
         setAuthToken(null);
         _handleSessionExpired();
@@ -91,7 +91,7 @@ class ApiClient {
         setAuthToken(null);
         return false;
       case RefreshOutcome.transient:
-        // Offline/timeout/5xx â€” tokens are kept. This call fails, but the auth
+        // Offline/timeout/5xx — tokens are kept. This call fails, but the auth
         // token stays in place so a later call can retry the refresh.
         return false;
     }
@@ -152,7 +152,7 @@ class ApiClient {
     if (_subscriptionRedirectInFlight) return;
     _subscriptionRedirectInFlight = true;
 
-    // During onboarding the paywall is a router step â€” don't kick the user out.
+    // During onboarding the paywall is a router step — don't kick the user out.
     if (isOnboardingCompleted != null && !isOnboardingCompleted!()) {
       _subscriptionRedirectInFlight = false;
       return;
@@ -323,7 +323,7 @@ class ApiClient {
     }
   }
 
-  /// POST WITHOUT 401-retry â€” used only for the refresh-token call so we never
+  /// POST WITHOUT 401-retry — used only for the refresh-token call so we never
   /// recurse into a retry storm. Surfaces the HTTP status alongside the body
   /// (status 0 = transport failure: offline/timeout/etc.) so [TokenService]
   /// can tell an explicit server rejection from a network blip and only wipe
@@ -381,7 +381,7 @@ class ApiClient {
 
   /// Like the JSON helpers, but surfaces the HTTP status alongside the decoded body so
   /// callers can act on it. The live-schedule editor needs this: 409 = version conflict,
-  /// 423 = locked, 200 = applied â€” the status IS the signal. Honors 401-refresh; the live
+  /// 423 = locked, 200 = applied — the status IS the signal. Honors 401-refresh; the live
   /// endpoints are paywall-exempt so the subscription redirect isn't triggered here.
   Future<({int status, dynamic body})> sendForResult(
       String method, String endpoint, Object? body) async {

@@ -14,7 +14,7 @@ import 'calling_service.dart';
 import 'notification_service.dart';
 import 'preferences.dart';
 
-/// Debug-only call logging â€” emails/room names are personal data and
+/// Debug-only call logging — emails/room names are personal data and
 /// `debugPrint` is NOT stripped in release builds.
 void _callLog(String msg) {
   if (kDebugMode) debugPrint(msg);
@@ -24,9 +24,9 @@ void _callLog(String msg) {
 /// incoming notification on Android), the way Snapchat/WhatsApp present calls.
 ///
 /// Incoming calls arrive two ways:
-///   â€¢ Foreground â€” a `call_incoming` WebSocket event â†’ [showIncoming].
-///   â€¢ Background / killed â€” a high-priority call push wakes the app; the FCM
-///     handler (Android) or PushKitâ†’CallKit (iOS) calls [showIncomingFromData].
+///   • Foreground — a `call_incoming` WebSocket event → [showIncoming].
+///   • Background / killed — a high-priority call push wakes the app; the FCM
+///     handler (Android) or PushKit→CallKit (iOS) calls [showIncomingFromData].
 ///
 /// CallKit button taps come back through [FlutterCallkitIncoming.onEvent]; we
 /// translate accept/decline/end into [CallingService] calls and navigation.
@@ -37,18 +37,18 @@ class CallKitService {
   final NotificationService _notifications;
   final _uuid = const Uuid();
 
-  // Map the CallKit call UUID â†” our LiveKit room name so events can be correlated.
+  // Map the CallKit call UUID ↔ our LiveKit room name so events can be correlated.
   final Map<String, _PendingCall> _byCallId = {};
   final Map<String, String> _callIdByRoom = {};
 
   // Rooms already accepted/declined/ended. The server rings BOTH over the
   // WebSocket and via push, so a second (late) ring for the same call can arrive
-  // after it's been handled â€” showing a phantom incoming call that, when
-  // dismissed, fires a decline â†’ a spurious /reject that kills the live call.
+  // after it's been handled — showing a phantom incoming call that, when
+  // dismissed, fires a decline → a spurious /reject that kills the live call.
   // Once a room is handled we suppress any further ring for it. Room names are
   // GUIDs (never reused), so this can never hide a legitimate new call.
   final Set<String> _handledRooms = {};
-  final Set<String> _acceptedRooms = {}; // rooms we answered â€” never reject these
+  final Set<String> _acceptedRooms = {}; // rooms we answered — never reject these
   final Map<String, Timer> _handledTimers = {};
 
   void _markHandled(String roomName) {
@@ -88,7 +88,7 @@ class CallKitService {
     // iOS: the incoming CallKit screen is reported NATIVELY from the VoIP push
     // (PushKit, see ios/Runner/AppDelegate.swift) for every call, in all app
     // states. Showing one here from the WebSocket ring too stacks a SECOND CallKit
-    // UI â€” two accept/reject screens. So on iOS the push is the single source of
+    // UI — two accept/reject screens. So on iOS the push is the single source of
     // the incoming UI; the WebSocket is used only for accepted/ended/rejected.
     if (Platform.isIOS) {
       _callLog('[CALL] CallKit: skipping WS incoming UI on iOS (VoIP push shows it natively)');
@@ -113,17 +113,17 @@ class CallKitService {
   }) async {
     // Respect the user's calling preference (optional feature).
     if (!Preferences.getBool('calling_enabled', true)) return;
-    // Suppress a late/duplicate ring for a call that's already been handled â€” this
-    // is what was emitting a phantom decline â†’ spurious /reject that killed calls.
+    // Suppress a late/duplicate ring for a call that's already been handled — this
+    // is what was emitting a phantom decline → spurious /reject that killed calls.
     if (_handledRooms.contains(roomName)) {
       _callLog('[CALL] CallKit: suppressing duplicate/late ring for handled room $roomName');
       return;
     }
-    // Busy: already in (or ringing/connecting) a call â†’ auto-decline the new one.
+    // Busy: already in (or ringing/connecting) a call → auto-decline the new one.
     // Otherwise it would stack a second ring, and accepting it would tear down the
     // live call (a single CallingService holds one room at a time).
     if (_calling.isInCall) {
-      _callLog('[CALL] CallKit: busy â€” auto-declining incoming room $roomName');
+      _callLog('[CALL] CallKit: busy — auto-declining incoming room $roomName');
       _markHandled(roomName);
       await _calling.rejectCall(roomName);
       return;
@@ -160,7 +160,7 @@ class CallKitService {
   Future<void> _onEvent(CallEvent? event) async {
     if (event == null) return;
 
-    // iOS VoIP token refresh â†’ (re)register with the server.
+    // iOS VoIP token refresh → (re)register with the server.
     if (event.event == Event.actionDidUpdateDevicePushTokenVoip) {
       await _onTokenEvent(event);
       return;
@@ -236,8 +236,8 @@ class CallKitService {
       livekitUrl: AppNavigation.livekitUrl,
     );
 
-    // Open the call UI IMMEDIATELY (shows "Connectingâ€¦") and let it attach the room
-    // when the join completes â€” the recipient shouldn't stare at the incoming
+    // Open the call UI IMMEDIATELY (shows "Connecting…") and let it attach the room
+    // when the join completes — the recipient shouldn't stare at the incoming
     // screen during the ~1s join. A failed join closes the screen from inside.
     await navigator.push(
       MaterialPageRoute<void>(
@@ -257,7 +257,7 @@ class CallKitService {
     _byCallId.remove(callId);
     _callIdByRoom.remove(pending.roomName);
     // If this room was already accepted, this decline is a phantom (a leftover
-    // duplicate ring being dismissed) â€” do NOT reject, or it kills the live call.
+    // duplicate ring being dismissed) — do NOT reject, or it kills the live call.
     if (_acceptedRooms.contains(pending.roomName)) {
       _callLog('[CALL] CallKit: skipping reject for already-accepted room ${pending.roomName}');
       return;

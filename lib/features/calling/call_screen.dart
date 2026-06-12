@@ -8,15 +8,15 @@ import '../../models/call_models.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
 
-/// Debug-only call logging â€” emails/room names are personal data and
+/// Debug-only call logging — emails/room names are personal data and
 /// `debugPrint` is NOT stripped in release builds.
 void _callLog(String msg) {
   if (kDebugMode) debugPrint(msg);
 }
 
 /// Full-screen active call UI. Open this route the instant a call is accepted/
-/// placed â€” pass [connecting] (a future of the room) so the screen appears
-/// immediately showing "Connectingâ€¦" and attaches the room when it's live,
+/// placed — pass [connecting] (a future of the room) so the screen appears
+/// immediately showing "Connecting…" and attaches the room when it's live,
 /// rather than the caller/recipient staring at a frozen screen during the join.
 class CallScreen extends StatefulWidget {
   const CallScreen({
@@ -62,7 +62,7 @@ class _CallScreenState extends State<CallScreen> {
   bool _answered = false; // call_accepted received or remote joined the room
   Timer? _ringTimeout; // caller-side: end the call if nobody answers
   Timer? _rejectGrace; // brief wait before honoring a reject (accept may race it)
-  Timer? _remoteGoneTimer; // remote left the room â€” close if they don't return
+  Timer? _remoteGoneTimer; // remote left the room — close if they don't return
 
   @override
   void initState() {
@@ -71,8 +71,8 @@ class _CallScreenState extends State<CallScreen> {
     _roomName = widget.roomName;
     _room = widget.room;
 
-    // The WebSocket call-state listener is active immediately â€” even while
-    // connecting â€” so an accept/reject/end that arrives during the join is handled.
+    // The WebSocket call-state listener is active immediately — even while
+    // connecting — so an accept/reject/end that arrives during the join is handled.
     _stateSub = ServiceLocator.calling.onCallStateChanged.listen(_onWsState);
 
     if (_room != null) {
@@ -87,7 +87,7 @@ class _CallScreenState extends State<CallScreen> {
   void _onConnected(Room? room) {
     if (!mounted) return;
     if (room == null) {
-      _callLog('[CALL] screen: connect returned null â†’ closing');
+      _callLog('[CALL] screen: connect returned null → closing');
       final err = ServiceLocator.calling.lastConnectError;
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
         content: Text(err != null ? 'Call failed: $err' : 'Call failed to connect.'),
@@ -116,13 +116,13 @@ class _CallScreenState extends State<CallScreen> {
         _callLog('[CALL] screen: ParticipantConnected ${e.participant.identity} '
             'remotes=${room.remoteParticipants.length}');
         _remoteEverConnected = true;
-        _answered = true; // remote is in the room â€” a later reject is stale
-        _ringTimeout?.cancel(); // answered â€” stop the no-answer timeout
+        _answered = true; // remote is in the room — a later reject is stale
+        _ringTimeout?.cancel(); // answered — stop the no-answer timeout
         _rejectGrace?.cancel();
-        _remoteGoneTimer?.cancel(); // remote (re)joined â€” cancel the leave timer
+        _remoteGoneTimer?.cancel(); // remote (re)joined — cancel the leave timer
         _refresh();
       })
-      // Just refresh the UI â€” do NOT auto-end here. A live (esp. video) call can
+      // Just refresh the UI — do NOT auto-end here. A live (esp. video) call can
       // briefly fire ParticipantDisconnected during a renegotiation/reconnect, and
       // auto-ending on that was killing working calls. The real "other side hung up"
       // signal is the call_ended WebSocket event handled below.
@@ -131,7 +131,7 @@ class _CallScreenState extends State<CallScreen> {
             'remotes=${room.remoteParticipants.length}');
         _refresh();
         // The remote left. Close the call if they don't return within a grace
-        // window â€” we can't rely solely on the call_ended WebSocket event, which
+        // window — we can't rely solely on the call_ended WebSocket event, which
         // sometimes never arrives (other side killed / lost network). The grace is
         // long enough that a brief LiveKit reconnect won't drop a live call, and
         // ParticipantConnected cancels it. Only after the call was actually answered.
@@ -144,7 +144,7 @@ class _CallScreenState extends State<CallScreen> {
       ..on<TrackPublishedEvent>((_) => _refresh())
       ..on<TrackUnpublishedEvent>((_) => _refresh())
       ..on<RoomDisconnectedEvent>((e) {
-        _callLog('[CALL] screen: RoomDisconnected reason=${e.reason} â†’ endAndClose');
+        _callLog('[CALL] screen: RoomDisconnected reason=${e.reason} → endAndClose');
         _endAndClose();
       });
 
@@ -154,7 +154,7 @@ class _CallScreenState extends State<CallScreen> {
     if (!_remoteEverConnected) {
       _ringTimeout = Timer(const Duration(seconds: 45), () {
         if (mounted && !_remoteEverConnected) {
-          _callLog('[CALL] screen: ring timeout (45s, no answer) â†’ endAndClose');
+          _callLog('[CALL] screen: ring timeout (45s, no answer) → endAndClose');
           _endAndClose();
         }
       });
@@ -162,7 +162,7 @@ class _CallScreenState extends State<CallScreen> {
     _refresh();
   }
 
-  /// Call state from the WebSocket. Only react to events for THIS room â€” a stray/
+  /// Call state from the WebSocket. Only react to events for THIS room — a stray/
   /// late event from a previous or concurrent call must not touch this call.
   void _onWsState(CallStateEvent event) {
     final myRoom = _roomName;
@@ -173,7 +173,7 @@ class _CallScreenState extends State<CallScreen> {
     _callLog('[CALL] screen: WS ${event.type} (answered=$_answered)');
     switch (event.type) {
       case 'call_accepted':
-        // The callee answered â€” the call is live. Accept WINS over any reject.
+        // The callee answered — the call is live. Accept WINS over any reject.
         _answered = true;
         _rejectGrace?.cancel();
         break;
@@ -183,7 +183,7 @@ class _CallScreenState extends State<CallScreen> {
       case 'call_rejected':
         // A duplicate ring on the callee (WebSocket + push) can emit a spurious
         // reject right around the accept. If we've already been answered, ignore
-        // it. Otherwise wait briefly â€” an accept may be racing this reject â€” and
+        // it. Otherwise wait briefly — an accept may be racing this reject — and
         // only end if no answer arrives in that window.
         if (_answered) {
           _callLog('[CALL] screen: ignoring call_rejected (already answered)');
@@ -191,7 +191,7 @@ class _CallScreenState extends State<CallScreen> {
           _rejectGrace?.cancel();
           _rejectGrace = Timer(const Duration(seconds: 2), () {
             if (mounted && !_answered) {
-              _callLog('[CALL] screen: call_rejected stands (no answer) â†’ endAndClose');
+              _callLog('[CALL] screen: call_rejected stands (no answer) → endAndClose');
               _endAndClose();
             }
           });
@@ -205,14 +205,14 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   /// The remote left the room. Wait a grace window and close only if they're still
-  /// gone â€” a brief LiveKit reconnect (ParticipantConnected) cancels this. This is
+  /// gone — a brief LiveKit reconnect (ParticipantConnected) cancels this. This is
   /// the fallback for when the call_ended WebSocket event never arrives.
   void _scheduleEndIfRemoteGone() {
     _remoteGoneTimer?.cancel();
     _remoteGoneTimer = Timer(const Duration(seconds: 6), () {
       if (!mounted || _closing) return;
       if (_room?.remoteParticipants.isEmpty ?? true) {
-        _callLog('[CALL] screen: remote gone for 6s (no call_ended) â†’ endAndClose');
+        _callLog('[CALL] screen: remote gone for 6s (no call_ended) → endAndClose');
         _endAndClose();
       }
     });
@@ -221,10 +221,10 @@ class _CallScreenState extends State<CallScreen> {
   /// Status line under the avatar.
   String _statusText(bool hasRemote) {
     if (_closing) return 'Call ended';
-    if (_room == null) return 'Connectingâ€¦';
+    if (_room == null) return 'Connecting…';
     if (hasRemote) return 'Connected';
-    if (_remoteEverConnected) return 'Call ended'; // remote left â€” not "Ringing"
-    return 'Ringingâ€¦';
+    if (_remoteEverConnected) return 'Call ended'; // remote left — not "Ringing"
+    return 'Ringing…';
   }
 
   @override
