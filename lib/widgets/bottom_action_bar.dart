@@ -17,10 +17,17 @@ class BottomActionBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final resolved = padding.resolve(Directionality.of(context));
+    // Keyboard down: keep the base bottom gap + the Android nav-bar / iOS
+    // home-indicator inset so the action never sits under the system bar.
+    // Keyboard up: the keyboard already covers that inset, so collapse to a
+    // small gap instead of floating the action ~70px above the keyboard.
+    final bottom = keyboardUp
+        ? 12.0
+        : resolved.bottom + MediaQuery.viewPaddingOf(context).bottom;
     return Container(
-      // Add the Android nav-bar / iOS home-indicator inset so the action never
-      // sits under the system bar on edge-to-edge devices.
-      padding: padding.add(EdgeInsets.only(bottom: MediaQuery.viewPaddingOf(context).bottom)),
+      padding: EdgeInsets.fromLTRB(resolved.left, resolved.top, resolved.right, bottom),
       decoration: BoxDecoration(
         color: palette.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),

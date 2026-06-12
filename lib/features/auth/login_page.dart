@@ -296,7 +296,11 @@ class _LoginPageState extends State<LoginPage> {
 
           // Sign In button
           Container(
-            padding: EdgeInsets.fromLTRB(24, 20, 24, 36 + MediaQuery.viewPaddingOf(context).bottom),
+            // When the keyboard is up it already covers the home-indicator inset,
+            // so drop the safe-area + large bottom gap to a small one — otherwise
+            // the button floats ~70px above the keyboard, wasting space.
+            padding: EdgeInsets.fromLTRB(24, 20, 24,
+                MediaQuery.viewInsetsOf(context).bottom > 0 ? 12 : 36 + MediaQuery.viewPaddingOf(context).bottom),
             decoration: BoxDecoration(
               color: palette.surface,
               borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
