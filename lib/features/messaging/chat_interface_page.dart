@@ -659,10 +659,8 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
               ),
             ),
           ),
-          // Tapping the name opens a call dropdown (voice / video) when calling
-          // is enabled — keeps the header uncluttered vs. always-on buttons.
-          // Center (not stretch) so the popup anchors to the name+caret, not the
-          // full-width slot — otherwise the menu opens from the far-left edge.
+          // Tapping the name opens a call chooser (voice / video) shown centered
+          // on screen. Center the name in the header slot for a tidy layout.
           Expanded(child: Center(child: _contactHeading(context))),
           Container(
             width: 44,
@@ -713,33 +711,53 @@ class _ChatInterfacePageState extends State<ChatInterfacePage> with WidgetsBindi
 
     if (!callingEnabled || !widget.callable) return heading;
 
-    return PopupMenuButton<bool>(
-      tooltip: 'Call ${widget.contactName}',
-      position: PopupMenuPosition.under,
-      offset: const Offset(0, 8),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _showCallMenu(context),
+      child: heading,
+    );
+  }
+
+  /// Voice / video call chooser, shown CENTERED on screen — its position does
+  /// not depend on the contact name's length or where the header text sits.
+  Future<void> _showCallMenu(BuildContext context) async {
+    final palette = context.palette;
+    final mq = MediaQuery.of(context);
+    const menuWidth = 200.0;
+    final left = ((mq.size.width - menuWidth) / 2).clamp(8.0, mq.size.width - menuWidth - 8.0);
+
+    final video = await showMenu<bool>(
+      context: context,
       color: palette.surfaceElevated,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      onSelected: (video) => _startCall(video: video),
-      itemBuilder: (_) => [
+      // left == right distance ⇒ the menu is horizontally centered on screen.
+      position: RelativeRect.fromLTRB(left, mq.viewPadding.top + 60, left, 0),
+      items: [
         PopupMenuItem<bool>(
           value: false,
-          child: Row(children: [
-            const Icon(Icons.call, size: 20, color: AppColors.accentTeal),
-            const SizedBox(width: 12),
-            Text('Voice call', style: TextStyle(color: palette.textPrimary)),
-          ]),
+          child: SizedBox(
+            width: menuWidth - 32,
+            child: Row(children: [
+              const Icon(Icons.call, size: 20, color: AppColors.accentTeal),
+              const SizedBox(width: 12),
+              Text('Voice call', style: TextStyle(color: palette.textPrimary)),
+            ]),
+          ),
         ),
         PopupMenuItem<bool>(
           value: true,
-          child: Row(children: [
-            const Icon(Icons.videocam, size: 20, color: AppColors.primaryBlue),
-            const SizedBox(width: 12),
-            Text('Video call', style: TextStyle(color: palette.textPrimary)),
-          ]),
+          child: SizedBox(
+            width: menuWidth - 32,
+            child: Row(children: [
+              const Icon(Icons.videocam, size: 20, color: AppColors.primaryBlue),
+              const SizedBox(width: 12),
+              Text('Video call', style: TextStyle(color: palette.textPrimary)),
+            ]),
+          ),
         ),
       ],
-      child: heading,
     );
+    if (video != null) _startCall(video: video);
   }
 
   // ── Message bubble ─────────────────────────────────────────────────────────────
