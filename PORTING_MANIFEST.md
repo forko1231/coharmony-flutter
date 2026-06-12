@@ -1,5 +1,12 @@
 # CoHarmony — MAUI → Flutter port manifest
 
+> **SUPERSEDED (June 2026):** the port is complete — every screen is fully wired
+> (phases 1–3 done), so the `[~]` "UI shell only" statuses below are stale. The
+> proposal-based custody flow described below was replaced by the live schedule
+> system (`/api/schedule/live`, `lib/services/live_schedule_service.dart`). Pages
+> referenced below that no longer exist were deleted in that cutover. Kept for
+> historical reference only.
+
 Source of truth = the MAUI app at `../EZSplit/EZSplit`. This tracks every screen/component
 so the port is methodical and nothing is missed. Port order: **UI shells first** (fast,
 clickable on web), **then business logic / services**, **then native integrations last**.

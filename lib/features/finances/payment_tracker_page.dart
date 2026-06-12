@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../models/financial_models.dart';
 import '../../services/preferences.dart';
@@ -11,7 +11,7 @@ import '../../theme/app_palette.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/skeleton.dart';
 
-/// Payments — faithful port of `Views/Finances/PaymentTracker.xaml(.cs)`.
+/// Payments â€” faithful port of `Views/Finances/PaymentTracker.xaml(.cs)`.
 ///
 /// Loads the month's charges + the charges awaiting the user's verification from
 /// [FinancialService]. Outgoing/Incoming split is by whether the charge's email
@@ -20,7 +20,7 @@ import '../../widgets/skeleton.dart';
 /// mark-paid / verify / dispute lifecycle are all wired.
 ///
 /// Marking a charge paid prompts to attach a **receipt photo** (camera or
-/// gallery) — base64-uploaded via `uploadReceipt` — or "Skip - No Receipt",
+/// gallery) â€” base64-uploaded via `uploadReceipt` â€” or "Skip - No Receipt",
 /// mirroring MAUI's `MarkChargeAsPaidAsync`. Receipt images are displayed
 /// (`getReceipt`) on the charge details sheet when present.
 class PaymentTrackerPage extends StatefulWidget {
@@ -159,7 +159,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
     );
   }
 
-  // ── Header ───────────────────────────────────────────────────────────────────
+  // â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _header(BuildContext context) {
     final palette = context.palette;
     final direction = _outgoing ? 'Owed' : 'Expected';
@@ -257,7 +257,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
         ),
       );
 
-  // ── Tab selector ────────────────────────────────────────────────────────────
+  // â”€â”€ Tab selector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _tabSelector(BuildContext context) {
     final palette = context.palette;
     final outCount = _monthCharges.where(_isMine).length;
@@ -298,7 +298,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
     );
   }
 
-  // ── Payment card ───────────────────────────────────────────────────────────────
+  // â”€â”€ Payment card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   ({String icon, Color bg, Color tint, String label}) _statusStyle(FCharge c) {
     final overdue = c.paymentStatus == 'unpaid' &&
         c.date != null &&
@@ -370,7 +370,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
                       Text(c.category?.isNotEmpty == true ? c.category! : _typeDisplay(c),
                           style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: palette.textPrimary)),
                       const SizedBox(height: 2),
-                      Text('${_typeDisplay(c)} • $due', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
+                      Text('${_typeDisplay(c)} â€¢ $due', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
                     ],
                   ),
                 ),
@@ -438,7 +438,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
     );
   }
 
-  // ── Details (tap a card) ─────────────────────────────────────────────────────
+  // â”€â”€ Details (tap a card) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   void _showDetails(FCharge c) {
     final isMine = _isMine(c);
     showModalBottomSheet<void>(
@@ -542,7 +542,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
         ),
       );
 
-  // ── Actions ─────────────────────────────────────────────────────────────────
+  // â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Future<void> _markPaid(FCharge c) async {
     // MAUI's single action sheet: Take Photo / Choose from Gallery /
     // Skip - No Receipt / Cancel.
@@ -570,7 +570,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
     });
   }
 
-  /// MAUI's "Add Receipt?" action sheet — returns 'camera' | 'gallery' | 'skip' | 'cancel'.
+  /// MAUI's "Add Receipt?" action sheet â€” returns 'camera' | 'gallery' | 'skip' | 'cancel'.
   Future<String?> _receiptChoice() => showModalBottomSheet<String>(
         context: context,
         backgroundColor: context.palette.surfaceElevated,
@@ -652,7 +652,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
     });
   }
 
-  // ── Sheets ─────────────────────────────────────────────────────────────────────
+  // â”€â”€ Sheets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   void _showAddPayment(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -677,7 +677,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
       _ => 'split',
     };
     final repeatPattern = repeat.toLowerCase();
-    // Split → chosen %, else direction maps to 100 (paying) / 0 (requesting).
+    // Split â†’ chosen %, else direction maps to 100 (paying) / 0 (requesting).
     final splitPercentage = apiType == 'split' ? split : (paying ? 100.0 : 0.0);
 
     await _run(() async {
@@ -704,7 +704,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
     final overdue = mine.where((c) => c.paymentStatus == 'unpaid' && c.date != null && c.date!.isBefore(today));
     double sum(Iterable<FCharge> cs) => cs.fold(0, (s, c) => s + _userShare(c));
 
-    // Breakdown by type (user's charges), highest total first — matches MAUI.
+    // Breakdown by type (user's charges), highest total first â€” matches MAUI.
     final byType = <String, ({double total, int count})>{};
     for (final c in mine) {
       final key = _typeDisplay(c);
@@ -817,7 +817,7 @@ class _PaymentTrackerPageState extends State<PaymentTrackerPage> {
     );
   }
 
-  // ── Dialog helpers ────────────────────────────────────────────────────────────
+  // â”€â”€ Dialog helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Future<void> _run(Future<void> Function() action) async {
     setState(() => _busy = true);
     try {
@@ -986,7 +986,7 @@ class _ReceiptImageState extends State<_ReceiptImage> {
   }
 }
 
-// ── Add payment sheet ─────────────────────────────────────────────────────────────
+// â”€â”€ Add payment sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _AddPaymentSheet extends StatefulWidget {
   final Future<void> Function({
     required double amount,
@@ -999,6 +999,25 @@ class _AddPaymentSheet extends StatefulWidget {
   const _AddPaymentSheet({required this.onSave});
   @override
   State<_AddPaymentSheet> createState() => _AddPaymentSheetState();
+}
+
+/// Parses a user-typed amount, accepting both `.` and `,` as decimal
+/// separators â€” EU-locale iOS decimal pads only offer the comma. Strips
+/// currency symbols/spaces; when both separators appear ("1.234,56" or
+/// "1,234.56") the last one is the decimal separator and the other is a
+/// thousands separator. Returns null when unparseable.
+double? _parseAmount(String raw) {
+  var text = raw.trim().replaceAll(RegExp(r'[^\d.,-]'), '');
+  final lastComma = text.lastIndexOf(',');
+  final lastDot = text.lastIndexOf('.');
+  if (lastComma >= 0 && lastDot >= 0) {
+    text = lastComma > lastDot
+        ? text.replaceAll('.', '').replaceAll(',', '.')
+        : text.replaceAll(',', '');
+  } else if (lastComma >= 0) {
+    text = text.replaceAll(',', '.');
+  }
+  return double.tryParse(text);
 }
 
 class _AddPaymentSheetState extends State<_AddPaymentSheet> {
@@ -1020,7 +1039,7 @@ class _AddPaymentSheetState extends State<_AddPaymentSheet> {
 
   Future<void> _save() async {
     final desc = _description.text.trim();
-    final amount = double.tryParse(_amount.text.trim());
+    final amount = _parseAmount(_amount.text);
     if (desc.isEmpty) {
       setState(() => _error = 'Please enter a description');
       return;
@@ -1205,6 +1224,7 @@ class _AddPaymentSheetState extends State<_AddPaymentSheet> {
       child: TextField(
         controller: controller,
         keyboardType: number ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.text,
+        inputFormatters: number ? [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))] : null,
         style: TextStyle(fontSize: 15, color: palette.textPrimary),
         decoration: InputDecoration(
           hintText: hint,
@@ -1277,7 +1297,7 @@ class _AddPaymentSheetState extends State<_AddPaymentSheet> {
       );
 }
 
-// ── Summary sheet ─────────────────────────────────────────────────────────────────
+// â”€â”€ Summary sheet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _SummarySheet extends StatelessWidget {
   final double verifiedTotal, pendingTotal, overdueTotal;
   final int verifiedCount, pendingCount, overdueCount;

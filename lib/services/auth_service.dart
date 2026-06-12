@@ -2,7 +2,14 @@ import '../models/auth_models.dart';
 import 'api_client.dart';
 import 'preferences.dart';
 import 'secure_storage_service.dart';
+import 'service_locator.dart';
 import 'token_service.dart';
+
+/// Current Terms-of-Service version, matching what the backend publishes via
+/// `GET api/legal/terms` (`version: "1.0"`). Bump this alongside the legal docs
+/// (LegalController) so the server-side acceptance audit trail names the right
+/// revision.
+const String kTermsOfServiceVersion = '1.0';
 
 /// Port of `Services/AuthService.cs`. Faithful 1:1 reproduction of every
 /// endpoint, payload and side-effect. Cross-checked against
@@ -150,9 +157,19 @@ class AuthService {
           _api.setAuthToken(currentToken);
           return true;
         } else {
-          final newToken = await _tokenService.refreshToken(_api);
-          if (newToken != null && newToken.isNotEmpty) {
-            _api.setAuthToken(newToken);
+          final refresh = await _tokenService.refreshToken(_api);
+          if (refresh.outcome == RefreshOutcome.refreshed &&
+              refresh.token != null &&
+              refresh.token!.isNotEmpty) {
+            _api.setAuthToken(refresh.token);
+            return true;
+          }
+          if (refresh.outcome == RefreshOutcome.transient) {
+            // Couldn't reach the server (e.g. offline cold start) — NOT an
+            // auth rejection. Keep the session alive with the existing token;
+            // the 401→refresh path retries once connectivity returns, and a
+            // genuine rejection then routes back to login via onAuthFailure.
+            _api.setAuthToken(currentToken);
             return true;
           }
         }
@@ -193,15 +210,56 @@ class AuthService {
     }
   }
 
+  /// Central logout: ALL sign-out paths (main settings, child settings,
+  /// subscription paywall, and the session-expired handler in
+  /// `ServiceLocator._handleSessionExpired`) funnel through here so the device
+  /// is left with no trace of the previous user's session. Every server call
+  /// is best-effort — local cleanup ALWAYS runs, even fully offline. Steps,
+  /// in order:
+  ///   1. disconnect the WebSocket (intentional — no auto-reconnect);
+  ///   2. unregister this device's push installation (needs the still-valid
+  ///      auth token) and revoke the refresh token server-side;
+  ///   3. drop tokens locally and clear the in-flight auth header;
+  ///   4. wipe per-conversation message encryption keys (secure storage +
+  ///      both in-memory caches — they are server-issued and re-fetched on
+  ///      the next sign-in);
+  ///   5. remove credentials (unless RememberMe) and cached bank fields;
+  ///   6. clear Preferences (matches the previous child/subscription-path
+  ///      behaviour — wipes email/AccountType/onboarding flags).
   Future<void> logout() async {
+    // 1. Stop real-time traffic so the old user's events stop arriving.
+    try {
+      await ServiceLocator.webSocket.disconnect();
+    } catch (_) {/* best-effort (also unset in unit tests) */}
+
+    // 2. Server-side teardown while the token is still valid. Push first:
+    //    the unregister endpoint is [Authorize]d, so it must precede revoke.
+    try {
+      await ServiceLocator.push.unregister();
+    } catch (_) {/* best-effort */}
     try {
       final refreshToken = await _tokenService.getRefreshToken();
       if (refreshToken.isNotEmpty) {
         await _revokeTokensWithServer(refreshToken);
       }
-      await _tokenService.removeToken();
-      _api.setAuthToken(null);
+    } catch (_) {/* best-effort */}
 
+    // 3. Local session teardown — always runs.
+    try {
+      await _tokenService.removeToken();
+    } catch (_) {/* keep going: the rest of the cleanup must still run */}
+    _api.setAuthToken(null);
+
+    // 4. Per-conversation encryption keys + their in-memory caches.
+    try {
+      ServiceLocator.messageEncryption.clearKeyCache();
+    } catch (_) {/* best-effort (also unset in unit tests) */}
+    try {
+      await _secureStorage.clearMessageEncryptionKeys();
+    } catch (_) {/* best-effort */}
+
+    // 5. Credentials (kept only with RememberMe) and cached bank data.
+    try {
       final rememberMe = Preferences.getBool('RememberMe', false);
       if (!rememberMe) {
         await _secureStorage.secureRemove('secure_email');
@@ -209,10 +267,13 @@ class AuthService {
       }
       await _secureStorage.secureRemove('secure_bank_account');
       await _secureStorage.secureRemove('secure_bank_routing');
-    } catch (_) {
-      await _tokenService.removeToken();
-      _api.setAuthToken(null);
-    }
+    } catch (_) {/* best-effort */}
+
+    // 6. App preferences — AFTER the RememberMe read above. Same wipe the
+    //    child/subscription paths always did; now every path gets it.
+    try {
+      await Preferences.clear();
+    } catch (_) {/* best-effort */}
   }
 
   Future<bool> _revokeTokensWithServer(String? refreshToken) async {
@@ -243,6 +304,21 @@ class AuthService {
       await _api.postJson('api/auth/onboarding-complete', <String, dynamic>{});
     } catch (_) {
       // Non-fatal: local completion still stands; backfill will catch it later.
+    }
+  }
+
+  /// Records the user's Terms-of-Service consent server-side
+  /// (`POST api/legal/accept-terms`, [Authorize]d — call only after a token is
+  /// set). The backend writes a `TERMS_ACCEPTED` audit-log row (email, version,
+  /// UTC timestamp), giving a provable acceptance trail for court-facing
+  /// records. Best-effort fire-and-forget: the signup UI already gates on the
+  /// consent checkbox, so a network blip here must never block the flow.
+  Future<void> recordTermsAcceptance() async {
+    try {
+      await _api.postJson(
+          'api/legal/accept-terms', {'version': kTermsOfServiceVersion});
+    } catch (_) {
+      // Non-fatal: consent was still given in the UI; nothing to surface.
     }
   }
 

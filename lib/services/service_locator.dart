@@ -24,6 +24,7 @@ import 'token_service.dart';
 import '../security/message_encryption_service.dart';
 import '../security/security_services.dart';
 import 'package:flutter/material.dart';
+import '../features/auth/landing_page.dart';
 import '../features/subscription/subscription_page.dart';
 
 /// Minimal service locator — the Flutter equivalent of the DI registration in
@@ -71,6 +72,7 @@ class ServiceLocator {
     bool Function()? isOnboardingCompleted,
     String Function()? accountType,
     void Function()? onSubscriptionRequired,
+    void Function()? onAuthFailure,
   }) async {
     if (_initialized) return;
 
@@ -86,6 +88,7 @@ class ServiceLocator {
       isOnboardingCompleted: isOnboardingCompleted ?? (() => OnboardingState.isCompleted),
       accountType: accountType ?? (() => Preferences.getString('AccountType')),
       onSubscriptionRequired: onSubscriptionRequired ?? _handleSubscriptionRequired,
+      onAuthFailure: onAuthFailure ?? _handleSessionExpired,
     );
     auth = AuthService(api, secureStorage, tokenService);
     schedule = ScheduleService(api);
@@ -153,6 +156,34 @@ class ServiceLocator {
     } finally {
       // Release the latch after a beat so a later genuine lapse can still react.
       Future.delayed(const Duration(seconds: 3), () => _subRecovering = false);
+    }
+  }
+
+  static bool _sessionExpiredHandling = false;
+
+  // Definitive session death: a 401'd call attempted a refresh and the server
+  // EXPLICITLY rejected the refresh token (ApiClient only fires onAuthFailure
+  // in that case — never on transport failures). Without this, every later call
+  // returned null forever and the user sat on permanently empty screens. Clean
+  // up local session state and route to the landing page so they can sign back in.
+  static Future<void> _handleSessionExpired() async {
+    if (_sessionExpiredHandling) return;
+    _sessionExpiredHandling = true;
+    try {
+      // Stored tokens were already wiped when the server rejected the refresh,
+      // so logout() is local-only here: its server revoke is skipped when the
+      // refresh token is empty, leaving just the credential/bank-data cleanup.
+      await auth.logout();
+      final nav = AppNavigation.navigatorKey.currentState;
+      nav?.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LandingPage()),
+        (route) => false,
+      );
+    } catch (_) {
+      // best-effort; never throw out of a background API call
+    } finally {
+      // Release the latch after a beat so a later genuine death can still react.
+      Future.delayed(const Duration(seconds: 3), () => _sessionExpiredHandling = false);
     }
   }
 }

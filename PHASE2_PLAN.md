@@ -1,5 +1,12 @@
 # Phase 2 — Logic / Services port (MAUI → Flutter)
 
+> **SUPERSEDED (June 2026):** the port is complete — every screen is fully wired
+> (phases 1–3 done) and this plan has been executed. The proposal-based custody
+> flow described below was replaced by the live schedule system
+> (`/api/schedule/live`, `lib/services/live_schedule_service.dart`). Pages and
+> services referenced below that no longer exist were deleted in that cutover.
+> Kept for historical reference only.
+
 **READ THIS FIRST IF CONTEXT WAS COMPACTED.** This is the durable plan for porting the
 MAUI app's business logic into the Flutter app. The UI-shell phase is already done
 (see `PORTING_MANIFEST.md`); every screen renders from local stub view-models. Phase 2

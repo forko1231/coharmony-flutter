@@ -105,6 +105,11 @@ class MessageEncryptionService {
     }
 
     final key = await _messaging.getConversationEncryptionKey(recipientEmail, senderEmail: senderEmail);
+    // A failed fetch returns '' — never cache it, or one transient failure
+    // poisons encrypt/decrypt for the whole conversation for 15 minutes.
+    // Returning it uncached keeps the existing per-call error behaviour while
+    // letting the very next call retry the fetch.
+    if (key.isEmpty) return key;
     _keyCache[cacheKey] = (key: key, expires: DateTime.now().toUtc().add(_keyCacheDuration));
 
     // Periodic cleanup of expired entries.

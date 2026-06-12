@@ -4,7 +4,7 @@ import '../models/schedule_models.dart';
 import 'api_client.dart';
 
 /// Port of `Services/ScheduleService.cs`. The classic schedule + weekly-pattern
-/// system (distinct from the proposal system in [CustodyProposalService]).
+/// system (distinct from the live custody editor in [LiveScheduleService]).
 /// Routes/payloads are 1:1 with the C# service and `ScheduleController.cs`.
 class ScheduleService {
   ScheduleService(this._api);
@@ -41,12 +41,21 @@ class ScheduleService {
     String formattedEndDate = '';
     if (endDate != null && endDate.isNotEmpty) {
       final dt = DateTime.tryParse(endDate);
-      if (dt != null) formattedEndDate = dt.toIso8601String();
+      // Wall-clock contract: the backend DateTime.TryParses EndDate with no
+      // timezone handling (an offset/Z suffix would be shifted to server-local
+      // time and could move the date), so send an explicit date-only string
+      // built from the calendar components as written.
+      if (dt != null) {
+        formattedEndDate = '${dt.year.toString().padLeft(4, '0')}-'
+            '${dt.month.toString().padLeft(2, '0')}-'
+            '${dt.day.toString().padLeft(2, '0')}';
+      }
     }
 
-    final response = await _api.postForString(
-      'api/schedule',
-      ScheduleUpdateApiRequest(
+    // The endpoint binds a JSON ARRAY (List<ScheduleUpdateRequest>) — a single
+    // object is a guaranteed 400 — so delegate to the batch method with one item.
+    return updateSchedules([
+      ScheduleUpdateRequest(
         month: month,
         day: day,
         year: year,
@@ -57,42 +66,8 @@ class ScheduleService {
         endDate: formattedEndDate,
         isCustodial: isCustodial,
         visibleToKids: visibleToKids,
-      ).toJson(),
-    );
-    return response.contains('Updated');
-  }
-
-  Future<bool> updateScheduleMetadata(
-    int month,
-    int day,
-    int year,
-    String tag, {
-    bool isOverride = false,
-    bool isProtected = false,
-    String overrideType = '',
-    String notes = '',
-  }) async {
-    final response = await _api.postForString(
-      'api/schedule/metadata',
-      ScheduleMetadataRequest(
-        month: month,
-        day: day,
-        year: year,
-        tag: tag,
-        isOverride: isOverride,
-        isProtected: isProtected,
-        overrideType: overrideType,
-        notes: notes,
-      ).toJson(),
-    );
-    return response.contains('Updated');
-  }
-
-  /// Mirrors the C#: the DELETE is issued with no body and the result string is
-  /// checked for "Deleted".
-  Future<bool> deleteSchedule(int month, int day, int year, String tag) async {
-    final result = await _api.deleteJson('api/schedule');
-    return result is String && result.contains('Deleted');
+      ),
+    ]);
   }
 
   Future<bool> respondToCustodyProposal(

@@ -13,9 +13,9 @@ import 'preferences.dart';
 /// and the status-changed broadcast.
 ///
 /// The NATIVE store purchase flows (StoreKit `HandleAppleSubscriptionAsync`,
-/// Play Billing `HandleGoogleSubscriptionAsync`, `RestorePurchasesAsync`) are
-/// phase 3 — they map onto the `in_app_purchase` plugin. Once the plugin obtains
-/// a transaction id / purchase token, it calls [validateAppleTransaction] /
+/// Play Billing `HandleGoogleSubscriptionAsync`, `RestorePurchasesAsync`) live
+/// in `IapService` (`in_app_purchase` plugin). Once the plugin obtains a
+/// transaction id / purchase token, it calls [validateAppleTransaction] /
 /// [validateGooglePurchase] / [restoreAppleTransactions] here.
 class SubscriptionService {
   SubscriptionService(this._api);
@@ -23,6 +23,14 @@ class SubscriptionService {
 
   static const _subscriptionStatusKey = 'subscription_status';
   static const _lastCheckKey = 'last_subscription_check';
+
+  /// Freshness window for normal cached-status reads.
+  static const _cacheFreshness = Duration(minutes: 5);
+
+  /// Offline grace: when the validation endpoint is unreachable (transport
+  /// failure, not an explicit server "invalid"), accept a cached status this
+  /// old rather than paywalling a paying subscriber on an offline cold start.
+  static const _offlineGraceWindow = Duration(hours: 72);
 
   final _statusChanged = StreamController<SubscriptionStatus>.broadcast();
   Stream<SubscriptionStatus> get onStatusChanged => _statusChanged.stream;
@@ -124,6 +132,7 @@ class SubscriptionService {
       final json = await _api.postJson(
           '/api/subscription/validate-subscription', <String, dynamic>{});
       if (json is Map<String, dynamic>) {
+        // Authoritative server answer — an explicit "invalid" paywalls.
         final resp = SubscriptionLoginValidationResponse.fromJson(json);
         if (resp.isValid) {
           await getSubscriptionStatus();
@@ -132,8 +141,26 @@ class SubscriptionService {
         }
         return (resp.isValid, resp.message ?? 'Subscription validation completed');
       }
-    } catch (_) {/* fall through */}
-    return (false, 'Unable to validate subscription status with server');
+    } catch (_) {/* treated as transport failure below */}
+
+    // Transport failure ([ApiClient] returns null when the server can't be
+    // reached): fall back to the last-known-good cached status (persisted in
+    // Preferences, so this survives an offline cold start) instead of
+    // paywalling a paying subscriber who happens to be offline.
+    final cached = await _cachedStatus(maxAge: _offlineGraceWindow);
+    if (cached != null) {
+      return (
+        cached.hasActiveSubscription,
+        cached.hasActiveSubscription
+            ? 'Using cached subscription status (offline)'
+            : 'No active subscription (cached)',
+      );
+    }
+
+    // Nothing cached and the server is unreachable: let the user through.
+    // Blocking here would paywall every subscriber on an offline cold start;
+    // the next successful validation (or any 402 from the API) re-gates them.
+    return (true, 'Unable to reach server; allowing offline access');
   }
 
   Future<bool> validateAppleSubscriptionInBackground() async {
@@ -168,25 +195,6 @@ class SubscriptionService {
     }
   }
 
-  // ---- Native store flows (phase 3) --------------------------------------
-
-  /// TODO(phase 3): StoreKit purchase via `in_app_purchase`, then
-  /// [validateAppleTransaction]. iOS only.
-  Future<(bool success, String message)> handleAppleSubscription(
-          {SubscriptionPlan plan = SubscriptionPlan.monthly}) async =>
-      (false, 'Apple subscriptions are only available on iOS devices.');
-
-  /// TODO(phase 3): Play Billing purchase via `in_app_purchase`, then
-  /// [validateGooglePurchase]. Android only.
-  Future<(bool success, String message)> handleGoogleSubscription(
-          {SubscriptionPlan plan = SubscriptionPlan.monthly}) async =>
-      (false, 'Google subscriptions are only available on Android devices.');
-
-  /// TODO(phase 3): StoreKit restore via `in_app_purchase`, then
-  /// [restoreAppleTransactions]. iOS only.
-  Future<(bool success, String message)> restorePurchases() async =>
-      (false, 'Restore Purchases is only available on iOS devices.');
-
   // ---- Cache --------------------------------------------------------------
 
   Future<void> _cacheStatus(SubscriptionInfo info) async {
@@ -197,14 +205,14 @@ class SubscriptionService {
     } catch (_) {/* ignore */}
   }
 
-  Future<SubscriptionInfo?> _cachedStatus() async {
+  Future<SubscriptionInfo?> _cachedStatus({Duration maxAge = _cacheFreshness}) async {
     try {
       final json = Preferences.getString(_subscriptionStatusKey, '');
       final lastCheckStr = Preferences.getString(_lastCheckKey, '');
       if (json.isEmpty || lastCheckStr.isEmpty) return null;
       final lastCheck = DateTime.tryParse(lastCheckStr);
       if (lastCheck == null) return null;
-      if (DateTime.now().toUtc().difference(lastCheck) < const Duration(minutes: 5)) {
+      if (DateTime.now().toUtc().difference(lastCheck) < maxAge) {
         final decoded = jsonDecode(json);
         if (decoded is Map<String, dynamic>) {
           return SubscriptionInfo.fromCache(decoded);

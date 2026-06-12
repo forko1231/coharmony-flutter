@@ -177,38 +177,6 @@ class ScheduleUpdateApiRequest {
       });
 }
 
-class ScheduleMetadataRequest {
-  ScheduleMetadataRequest({
-    required this.month,
-    required this.day,
-    required this.year,
-    this.tag = '',
-    this.isOverride = false,
-    this.isProtected = false,
-    this.overrideType = '',
-    this.notes = '',
-  });
-  final int month;
-  final int day;
-  final int year;
-  final String tag;
-  final bool isOverride;
-  final bool isProtected;
-  final String overrideType;
-  final String notes;
-
-  Map<String, dynamic> toJson() => {
-        'month': month,
-        'day': day,
-        'year': year,
-        'tag': tag,
-        'isOverride': isOverride,
-        'isProtected': isProtected,
-        'overrideType': overrideType,
-        'notes': notes,
-      };
-}
-
 class ScheduleUpdateRequest {
   ScheduleUpdateRequest({
     required this.month,

@@ -15,10 +15,10 @@ import 'live_schedule_page.dart';
 import 'date_data_page.dart';
 
 /// Schedule tab — port of `Views/Schedule/Scedule.xaml(.cs)` + `MonthItem.cs`. A month
-/// calendar shaded by custody assignment (resolved from the approved schedule / active
-/// proposal pattern + overrides), payment-status borders, event dots, monthly custody
-/// distribution metrics, a proposal-preview toggle, and entry points to manage custody
-/// / export. Device-calendar export + .ics share remain phase-3 native.
+/// calendar shaded by custody assignment (resolved from the live schedule pattern +
+/// overrides), payment-status borders, event dots, monthly custody distribution
+/// metrics, and entry points to manage custody / export. Device-calendar export +
+/// .ics share remain phase-3 native.
 class SchedulePage extends StatefulWidget {
   const SchedulePage({super.key});
 
@@ -33,11 +33,9 @@ class _SchedulePageState extends State<SchedulePage> {
   String _currentUserEmail = '';
 
   ApprovedScheduleResponse? _approved;
-  ActiveProposalResponse? _active;
   LiveAgreement? _agreement;
   List<ScheduleItem> _events = const []; // non-custodial only
   List<FCharge> _charges = const []; // current user's charges
-  bool _isViewingProposal = false;
 
   static const _monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -66,20 +64,17 @@ class _SchedulePageState extends State<SchedulePage> {
         ServiceLocator.schedule.getScheduleOptimized(_month, _year),
         ServiceLocator.financial.getCharges(),
         ServiceLocator.liveSchedule.getApprovedSchedule(),
-        ServiceLocator.liveSchedule.getActiveProposal(),
         ServiceLocator.liveSchedule.getAgreement(),
       ]);
       final allItems = results[0] as List<ScheduleItem>;
       final allCharges = results[1] as List<FCharge>;
       _approved = results[2] as ApprovedScheduleResponse?;
-      _active = results[3] as ActiveProposalResponse?;
-      _agreement = results[4] as LiveAgreement?;
+      _agreement = results[3] as LiveAgreement?;
 
       _events = allItems.where((s) => !s.isCustodial).toList();
       _charges = allCharges
           .where((c) => (c.email ?? '').toLowerCase() == _currentUserEmail.toLowerCase())
           .toList();
-      _isViewingProposal = false;
     } catch (_) {
       // Leave whatever loaded; calendar falls back to "None".
     } finally {
@@ -103,42 +98,11 @@ class _SchedulePageState extends State<SchedulePage> {
     _load();
   }
 
-  // ── Effective custody source (approved, or proposal when previewing) ─────────
-  ({int patternLength, List<ApprovedDayDto> days, List<ApprovedOverrideDto> overrides}) _source() {
-    if (_isViewingProposal && _active?.proposal != null) {
-      final p = _active!.proposal!;
-      return (
-        patternLength: p.patternLength,
-        days: [
-          for (final d in p.days)
-            ApprovedDayDto(
-              weekIndex: d.weekIndex,
-              dayIndex: d.dayIndex,
-              parentAssignment: d.parentAssignment,
-              transferTime: d.transferTime,
-              transferEndTime: d.transferEndTime,
-            ),
-        ],
-        overrides: [
-          for (final o in p.overrides.where((o) => !o.isMarkedForDeletion))
-            ApprovedOverrideDto(
-              dateKey: o.dateKey,
-              month: o.month,
-              day: o.day,
-              parentAssignment: o.parentAssignment,
-              transferTime: o.transferTime,
-              transferEndTime: o.transferEndTime,
-              description: o.description,
-              isAnnual: o.isAnnual,
-              holidayRule: o.holidayRule,
-              alternationMode: o.alternationMode,
-              alternationStartParent: o.alternationStartParent,
-            ),
-        ],
-      );
-    }
+  // ── Effective custody source (the live/approved schedule) ───────────────────
+  ({int patternLength, DateTime? patternAnchorDate, List<ApprovedDayDto> days, List<ApprovedOverrideDto> overrides}) _source() {
     return (
       patternLength: _approved?.patternLength ?? 1,
+      patternAnchorDate: _approved?.patternAnchorDate,
       days: _approved?.days ?? const [],
       overrides: _approved?.overrides ?? const [],
     );
@@ -161,7 +125,8 @@ class _SchedulePageState extends State<SchedulePage> {
 
   /// Custody for a date → (parent, transferTime, endTime). Mirrors MonthItem.GenerateDays.
   ({String parent, String? time, String? endTime}) _resolveCustody(
-      DateTime date, ({int patternLength, List<ApprovedDayDto> days, List<ApprovedOverrideDto> overrides}) src,
+      DateTime date,
+      ({int patternLength, DateTime? patternAnchorDate, List<ApprovedDayDto> days, List<ApprovedOverrideDto> overrides}) src,
       Map<String, ApprovedOverrideDto> overrideLookup) {
     final dateKey = '${_pad(date.month)}-${_pad(date.day)}';
     final ovr = overrideLookup[dateKey];
@@ -179,7 +144,7 @@ class _SchedulePageState extends State<SchedulePage> {
     }
     if (src.days.isNotEmpty) {
       final dayIndex = date.weekday % 7; // Sun=0
-      final weekInPattern = src.patternLength <= 1 ? 0 : _calcWeekInPattern(date, src.patternLength);
+      final weekInPattern = LiveScheduleService.weekIndexFor(date, src.patternLength, src.patternAnchorDate);
       for (final d in src.days) {
         if (d.dayIndex == dayIndex && d.weekIndex == weekInPattern) {
           return (parent: d.parentAssignment, time: d.transferTime, endTime: d.transferEndTime);
@@ -187,19 +152,6 @@ class _SchedulePageState extends State<SchedulePage> {
       }
     }
     return (parent: 'None', time: null, endTime: null);
-  }
-
-  int _calcWeekInPattern(DateTime date, int patternLength) {
-    final today = DateTime.now();
-    final patternStart = DateTime(today.year, today.month, 1);
-    final refSunday = patternStart.subtract(Duration(days: patternStart.weekday % 7));
-    final targetSunday = DateTime(date.year, date.month, date.day).subtract(Duration(days: date.weekday % 7));
-    var weeksDiff = targetSunday.difference(refSunday).inDays ~/ 7;
-    if (weeksDiff < 0) {
-      final cyclesToAdd = (weeksDiff.abs() ~/ patternLength) + 1;
-      weeksDiff += cyclesToAdd * patternLength;
-    }
-    return weeksDiff % patternLength;
   }
 
   /// Payment status for a date: 0 none, 1 paid, 2 unpaid (any unpaid charge that day).
@@ -309,7 +261,6 @@ class _SchedulePageState extends State<SchedulePage> {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final hasProposal = _active?.hasActiveProposal == true && _active?.proposal != null;
     return Scaffold(
       backgroundColor: palette.background,
       body: Stack(
@@ -331,10 +282,6 @@ class _SchedulePageState extends State<SchedulePage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                if (hasProposal) ...[
-                                  _proposalBanner(context),
-                                  const SizedBox(height: 20),
-                                ],
                                 if (_agreement?.needsMyAgreement ?? false) ...[
                                   _agreementBanner(context, mine: true),
                                   const SizedBox(height: 20),
@@ -421,66 +368,6 @@ class _SchedulePageState extends State<SchedulePage> {
           borderRadius: BorderRadius.circular(14),
         ),
         child: Center(child: AppIcon(icon, size: 24, color: palette.textSecondary)),
-      ),
-    );
-  }
-
-  // ── Proposal banner ───────────────────────────────────────────────────────────
-  Widget _proposalBanner(BuildContext context) {
-    final p = _active!.proposal!;
-    String title, subtitle;
-    if (_isViewingProposal) {
-      title = 'Viewing Proposed Changes';
-      subtitle = 'Toggle off to see current schedule';
-    } else if (p.isCurrentUserProposer) {
-      title = p.status == 'draft' ? 'Draft Proposal' : 'Your Proposal Pending';
-      subtitle = 'Toggle to preview your proposed changes';
-    } else {
-      title = 'Partner Proposed Changes';
-      subtitle = 'Toggle to preview proposed schedule';
-    }
-    return GestureDetector(
-      onTap: () => _openManageCustody(context),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: context.isDark ? const Color(0xFF451A03) : const Color(0xFFFEF3C7),
-          border: Border.all(color: AppColors.warningAmber),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(color: const Color(0xFFFED7AA), borderRadius: BorderRadius.circular(10)),
-              child: const Center(child: AppIcon('icon_alert', size: 20, color: AppColors.warningAmber)),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: context.isDark ? const Color(0xFFFCD34D) : const Color(0xFF92400E))),
-                  const SizedBox(height: 2),
-                  Text(subtitle,
-                      style: TextStyle(
-                          fontSize: 12, color: context.isDark ? const Color(0xFFFDE68A) : const Color(0xFFA16207))),
-                ],
-              ),
-            ),
-            Switch(
-              value: _isViewingProposal,
-              thumbColor: const WidgetStatePropertyAll(AppColors.warningAmber),
-              trackColor: const WidgetStatePropertyAll(Color(0xFFFCD34D)),
-              onChanged: (v) => setState(() => _isViewingProposal = v),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -863,6 +750,6 @@ class _SchedulePageState extends State<SchedulePage> {
     // static that onboarding may have left set).
     PendingTemplateService.isOnboardingMode = false;
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const LiveSchedulePage()));
-    if (mounted) _load(); // refresh after returning (proposal may have changed)
+    if (mounted) _load(); // refresh after returning (schedule may have changed)
   }
 }

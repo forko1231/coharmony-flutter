@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'token_service.dart';
@@ -9,14 +9,14 @@ import 'token_service.dart';
 /// Port of `Services/BaseApiService.cs`.
 ///
 /// Talks to the backend at [baseUrl]. Mirrors the C# behaviour: bearer auth via
-/// [TokenService], a fresh `X-Request-ID` per request, automatic 401→refresh→retry,
-/// and 402 (PaymentRequired) → subscription-required redirect (suppressed during
+/// [TokenService], a fresh `X-Request-ID` per request, automatic 401â†’refreshâ†’retry,
+/// and 402 (PaymentRequired) â†’ subscription-required redirect (suppressed during
 /// onboarding and for child accounts via injected guards).
 ///
 /// Unlike the C# generic `PostAsync<TRequest,TResponse>`, Dart has no source-gen
 /// serializer, so these methods take an already-encodable [body] (typically a
 /// `request.toJson()` map) and return the decoded JSON (`Map`/`List`/primitive),
-/// or null on failure — matching the C# `default(T)` contract. Callers map the
+/// or null on failure â€” matching the C# `default(T)` contract. Callers map the
 /// result into model classes.
 class ApiClient {
   ApiClient({
@@ -29,6 +29,7 @@ class ApiClient {
     this.isOnboardingCompleted,
     this.accountType,
     this.onSubscriptionRequired,
+    this.onAuthFailure,
   }) : _http = httpClient ?? http.Client();
 
   final TokenService tokenService;
@@ -44,6 +45,19 @@ class ApiClient {
   final String Function()? accountType;
   final void Function()? onSubscriptionRequired;
 
+  /// Fired when the session is DEFINITIVELY dead: a 401 was answered with a
+  /// refresh attempt that the server explicitly rejected (tokens already
+  /// wiped). NOT fired on transport failures â€” those are transient and the
+  /// next call simply retries the refresh. Debounced like 402.
+  final void Function()? onAuthFailure;
+
+  /// Lightweight connectivity signal for the UI: flips TRUE whenever a request
+  /// dies at the transport layer (timeout / socket error / no response at all)
+  /// and back to FALSE as soon as any request gets an HTTP response. Lets
+  /// dashboards tell "the server said you have no data" apart from "we never
+  /// reached the server" without changing the null-on-failure return contract.
+  final ValueNotifier<bool> hadTransportFailure = ValueNotifier<bool>(false);
+
   String? _authToken;
 
   void setAuthToken(String? token) =>
@@ -57,13 +71,45 @@ class ApiClient {
   }
 
   Future<bool> _handleAuthFailure() async {
-    final newToken = await tokenService.refreshToken(this);
-    if (newToken != null && newToken.isNotEmpty) {
-      setAuthToken(newToken);
-      return true;
+    final refresh = await tokenService.refreshToken(this);
+    switch (refresh.outcome) {
+      case RefreshOutcome.refreshed:
+        if (refresh.token != null && refresh.token!.isNotEmpty) {
+          setAuthToken(refresh.token);
+          return true;
+        }
+        return false;
+      case RefreshOutcome.rejected:
+        // Session definitively dead â€” the server rejected the refresh token
+        // (stored tokens already wiped). Route back to login (debounced).
+        setAuthToken(null);
+        _handleSessionExpired();
+        return false;
+      case RefreshOutcome.noSession:
+        // Nothing to refresh with (e.g. a 401 on an unauthenticated call such
+        // as a bad-password login). No session existed, so no redirect.
+        setAuthToken(null);
+        return false;
+      case RefreshOutcome.transient:
+        // Offline/timeout/5xx â€” tokens are kept. This call fails, but the auth
+        // token stays in place so a later call can retry the refresh.
+        return false;
     }
-    setAuthToken(null);
-    return false;
+  }
+
+  // 401 debounce: parallel failing calls shouldn't fire the re-login redirect
+  // repeatedly (mirrors the 402 latch below).
+  static bool _authFailureRedirectInFlight = false;
+
+  void _handleSessionExpired() {
+    if (_authFailureRedirectInFlight) return;
+    _authFailureRedirectInFlight = true;
+    try {
+      onAuthFailure?.call();
+    } finally {
+      // Release the latch after a beat so a later genuine death can still redirect.
+      Timer(const Duration(seconds: 2), () => _authFailureRedirectInFlight = false);
+    }
   }
 
   Uri _uri(String endpoint) {
@@ -106,7 +152,7 @@ class ApiClient {
     if (_subscriptionRedirectInFlight) return;
     _subscriptionRedirectInFlight = true;
 
-    // During onboarding the paywall is a router step — don't kick the user out.
+    // During onboarding the paywall is a router step â€” don't kick the user out.
     if (isOnboardingCompleted != null && !isOnboardingCompleted!()) {
       _subscriptionRedirectInFlight = false;
       return;
@@ -142,6 +188,7 @@ class ApiClient {
       await _ensureAuthToken();
       var response =
           await _http.get(_uri(endpoint), headers: _headers()).timeout(timeout);
+      hadTransportFailure.value = false;
 
       if (_isSubscriptionRequired(response)) {
         _handleSubscriptionRequired();
@@ -158,6 +205,7 @@ class ApiClient {
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       return _decode(response.body);
     } catch (_) {
+      hadTransportFailure.value = true;
       return null;
     }
   }
@@ -167,6 +215,7 @@ class ApiClient {
       await _ensureAuthToken();
       var response =
           await _http.get(_uri(endpoint), headers: _headers()).timeout(timeout);
+      hadTransportFailure.value = false;
 
       if (_isSubscriptionRequired(response)) {
         _handleSubscriptionRequired();
@@ -183,6 +232,7 @@ class ApiClient {
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       return response.bodyBytes;
     } catch (_) {
+      hadTransportFailure.value = true;
       return null;
     }
   }
@@ -210,6 +260,7 @@ class ApiClient {
       var response = await _http
           .post(_uri(endpoint), headers: _headers(json: true), body: jsonContent)
           .timeout(timeout);
+      hadTransportFailure.value = false;
 
       if (_isSubscriptionRequired(response)) {
         _handleSubscriptionRequired();
@@ -229,6 +280,7 @@ class ApiClient {
       }
       return response.body;
     } catch (e) {
+      hadTransportFailure.value = true;
       return 'Error: $e';
     }
   }
@@ -249,6 +301,7 @@ class ApiClient {
       }
 
       var response = await send();
+      hadTransportFailure.value = false;
       if (_isSubscriptionRequired(response)) {
         _handleSubscriptionRequired();
         return 'Subscription required';
@@ -265,23 +318,29 @@ class ApiClient {
       }
       return response.body;
     } catch (e) {
+      hadTransportFailure.value = true;
       return 'Error: $e';
     }
   }
 
-  /// POST WITHOUT 401-retry — used only for the refresh-token call so we never
-  /// recurse into a retry storm.
-  Future<dynamic> postWithoutRetry(String endpoint, Object? body) async {
+  /// POST WITHOUT 401-retry â€” used only for the refresh-token call so we never
+  /// recurse into a retry storm. Surfaces the HTTP status alongside the body
+  /// (status 0 = transport failure: offline/timeout/etc.) so [TokenService]
+  /// can tell an explicit server rejection from a network blip and only wipe
+  /// tokens on the former.
+  Future<({int status, dynamic body})> postWithoutRetry(
+      String endpoint, Object? body) async {
     try {
-      if (body == null) return null;
+      if (body == null) return (status: 0, body: null);
       final jsonContent = jsonEncode(body);
       final response = await _http
           .post(_uri(endpoint), headers: _headers(json: true), body: jsonContent)
           .timeout(timeout);
-      if (response.statusCode < 200 || response.statusCode >= 300) return null;
-      return _decode(response.body);
+      hadTransportFailure.value = false;
+      return (status: response.statusCode, body: _decode(response.body));
     } catch (_) {
-      return null;
+      hadTransportFailure.value = true;
+      return (status: 0, body: null);
     }
   }
 
@@ -300,6 +359,7 @@ class ApiClient {
       }
 
       var response = await send();
+      hadTransportFailure.value = false;
       if (_isSubscriptionRequired(response)) {
         _handleSubscriptionRequired();
         return null;
@@ -314,13 +374,14 @@ class ApiClient {
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       return _decode(response.body);
     } catch (_) {
+      hadTransportFailure.value = true;
       return null;
     }
   }
 
   /// Like the JSON helpers, but surfaces the HTTP status alongside the decoded body so
   /// callers can act on it. The live-schedule editor needs this: 409 = version conflict,
-  /// 423 = locked, 200 = applied — the status IS the signal. Honors 401-refresh; the live
+  /// 423 = locked, 200 = applied â€” the status IS the signal. Honors 401-refresh; the live
   /// endpoints are paywall-exempt so the subscription redirect isn't triggered here.
   Future<({int status, dynamic body})> sendForResult(
       String method, String endpoint, Object? body) async {
@@ -335,12 +396,14 @@ class ApiClient {
       }
 
       var response = await send();
+      hadTransportFailure.value = false;
       if (response.statusCode == 401 && await _handleAuthFailure()) {
         response = await send();
       }
       final decoded = response.body.isEmpty ? null : _decode(response.body);
       return (status: response.statusCode, body: decoded);
     } catch (_) {
+      hadTransportFailure.value = true;
       return (status: 0, body: null);
     }
   }

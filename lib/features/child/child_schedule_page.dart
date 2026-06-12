@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../models/custody_models.dart';
 import '../../models/schedule_models.dart';
 import '../../services/holiday_resolver.dart';
+import '../../services/live_schedule_service.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
@@ -158,7 +159,7 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
     if (days.isNotEmpty) {
       final patternLength = _approved?.patternLength ?? 1;
       final dayIndex = date.weekday % 7;
-      final week = patternLength <= 1 ? 0 : _calcWeek(date, patternLength);
+      final week = LiveScheduleService.weekIndexFor(date, patternLength, _approved?.patternAnchorDate);
       for (final d in days) {
         if (d.dayIndex == dayIndex && d.weekIndex == week) {
           return (parent: d.parentAssignment, time: d.transferTime, endTime: d.transferEndTime);
@@ -166,16 +167,6 @@ class _ChildSchedulePageState extends State<ChildSchedulePage> {
       }
     }
     return (parent: 'None', time: null, endTime: null);
-  }
-
-  int _calcWeek(DateTime date, int patternLength) {
-    final today = DateTime.now();
-    final patternStart = DateTime(today.year, today.month, 1);
-    final refSunday = patternStart.subtract(Duration(days: patternStart.weekday % 7));
-    final targetSunday = DateTime(date.year, date.month, date.day).subtract(Duration(days: date.weekday % 7));
-    var weeks = targetSunday.difference(refSunday).inDays ~/ 7;
-    if (weeks < 0) weeks += ((weeks.abs() ~/ patternLength) + 1) * patternLength;
-    return weeks % patternLength;
   }
 
   static String _pad(int n) => n.toString().padLeft(2, '0');

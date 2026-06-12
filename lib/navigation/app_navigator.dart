@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../features/auth/verify_mfa_page.dart';
 import '../features/child/child_app_shell.dart';
 import '../features/onboarding/contact_email_page.dart';
 import '../features/onboarding/partner_invite_page.dart';
@@ -10,6 +11,7 @@ import '../features/shell/app_shell.dart';
 import '../features/subscription/subscription_page.dart';
 import '../services/onboarding_router.dart';
 import '../services/post_auth_router.dart';
+import '../services/preferences.dart';
 import '../services/service_locator.dart';
 
 /// Maps the routers' decision enums onto concrete page widgets and drives
@@ -41,6 +43,18 @@ Future<Widget> resolveAfterAuth() async {
   switch (dest) {
     case PostAuthDestination.childApp:
       return const ChildAppShell();
+    case PostAuthDestination.mfaRequired:
+      // Cold-start MFA gate: a session was restored but the email was never
+      // verified (e.g. the app was killed on the VerifyMfaPage mid-login).
+      // Same arguments LoginPage uses, but no onComplete — there's no login
+      // page beneath us, so VerifyMfaPage's login-success fallback re-runs
+      // routeAfterAuth itself to continue into normal post-auth routing.
+      return VerifyMfaPage(
+        identifier: Preferences.getString('email'),
+        purpose: VerificationPurpose.login,
+        method: MfaMethod.email,
+        forceMethod: true,
+      );
     case PostAuthDestination.contactEmail:
       return const ContactEmailPage();
     case PostAuthDestination.subscription:

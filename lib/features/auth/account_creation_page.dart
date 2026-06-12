@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import '../../services/analytics_service.dart';
@@ -123,6 +125,12 @@ class _AccountCreationPageState extends State<AccountCreationPage> {
         });
         return;
       }
+
+      // The user ticked the Terms/Privacy checkbox above — record that consent
+      // server-side (audit trail for court-facing records). Fire-and-forget,
+      // AFTER login so the [Authorize]d endpoint has a token; must never block
+      // or fail signup.
+      unawaited(ServiceLocator.auth.recordTermsAcceptance());
 
       AnalyticsService.trackSignupCompleted();
 

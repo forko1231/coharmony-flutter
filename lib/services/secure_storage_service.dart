@@ -190,6 +190,26 @@ class SecureStorageService {
     _encryptionKeyCache[keyId] = encryptionKey;
     return true;
   }
+
+  /// Removes every per-conversation message encryption key — all stored
+  /// `secure_messaging_key_*` entries plus the in-memory cache. Called on
+  /// logout so a later sign-in (possibly a different account) cannot read the
+  /// previous user's conversation keys. Safe to clear: conversation keys are
+  /// server-issued and re-fetched on demand after the next sign-in. Touches
+  /// ONLY messaging keys — credentials, tokens, and the salt are untouched.
+  Future<void> clearMessageEncryptionKeys() async {
+    _encryptionKeyCache.clear();
+    try {
+      final all = await _storage.readAll();
+      for (final key in all.keys) {
+        if (key.startsWith(_messagingKeyPrefix)) {
+          await _storage.delete(key: key);
+        }
+      }
+    } catch (_) {
+      // Best-effort: the in-memory cache is already cleared.
+    }
+  }
 }
 
 /// PBKDF2-HMAC-SHA256, equivalent to .NET `Rfc2898DeriveBytes` with SHA256.

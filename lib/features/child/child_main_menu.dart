@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../models/auth_models.dart';
 import '../../models/custody_models.dart';
 import '../../models/message_models.dart';
 import '../../services/holiday_resolver.dart';
+import '../../services/live_schedule_service.dart';
 import '../../services/preferences.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
@@ -27,7 +30,9 @@ class ChildMainMenu extends StatefulWidget {
 
 class _ChildMainMenuState extends State<ChildMainMenu> {
   bool _loading = true;
+  bool _loadFailed = false; // transport failure during the last load → show the banner
   String _email = '';
+  StreamSubscription<MessageReceivedEvent>? _msgSub;
   ApprovedScheduleResponse? _approved;
   FamilyInfo? _family;
   List<MessageContent> _messages = const [];
@@ -48,7 +53,7 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
     _load();
     ServiceLocator.push.init(); // FCM token register (Android only; no-op on iOS)
     ServiceLocator.callKit.registerVoipToken(); // iOS VoIP token register (no-op on Android)
-    ServiceLocator.messaging.onMessageReceived.listen((_) {
+    _msgSub = ServiceLocator.messaging.onMessageReceived.listen((_) {
       if (mounted) _loadMessages();
     });
     // Prime calling permissions (mic + Android notification/full-screen) so the
@@ -58,12 +63,29 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
     });
   }
 
+  @override
+  void dispose() {
+    _msgSub?.cancel();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     _email = Preferences.getString('email');
+    // Track transport failures across the whole load: the fetches run
+    // concurrently, so the notifier's final value alone could be masked by a
+    // late success. Any TRUE during the load means data may be missing.
+    final net = ServiceLocator.api.hadTransportFailure;
+    var sawNetFailure = false;
+    void trackNet() {
+      if (net.value) sawNetFailure = true;
+    }
+    net.addListener(trackNet);
     try {
       _approved = await ServiceLocator.liveSchedule.getApprovedSchedule();
     } catch (_) {}
     await Future.wait([_loadFamily(), _loadMessages()]);
+    net.removeListener(trackNet);
+    _loadFailed = sawNetFailure || net.value;
     if (mounted) setState(() => _loading = false);
   }
 
@@ -121,7 +143,7 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
     if (days.isNotEmpty) {
       final patternLength = _approved?.patternLength ?? 1;
       final dayIndex = date.weekday % 7;
-      final week = patternLength <= 1 ? 0 : _calcWeek(date, patternLength);
+      final week = LiveScheduleService.weekIndexFor(date, patternLength, _approved?.patternAnchorDate);
       for (final d in days) {
         if (d.dayIndex == dayIndex && d.weekIndex == week) {
           return (parent: d.parentAssignment, time: d.transferTime, endTime: d.transferEndTime);
@@ -129,15 +151,6 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
       }
     }
     return (parent: 'None', time: null, endTime: null);
-  }
-
-  int _calcWeek(DateTime date, int patternLength) {
-    final patternStart = DateTime(_now.year, _now.month, 1);
-    final refSunday = patternStart.subtract(Duration(days: patternStart.weekday % 7));
-    final targetSunday = DateTime(date.year, date.month, date.day).subtract(Duration(days: date.weekday % 7));
-    var weeks = targetSunday.difference(refSunday).inDays ~/ 7;
-    if (weeks < 0) weeks += ((weeks.abs() ~/ patternLength) + 1) * patternLength;
-    return weeks % patternLength;
   }
 
   static String _parentLabel(String p) => switch (p.toLowerCase()) {
@@ -296,6 +309,10 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
+                              if (_loadFailed) ...[
+                                _offlineBanner(context),
+                                const SizedBox(height: 16),
+                              ],
                               Row(
                                 children: [
                                   Expanded(
@@ -321,6 +338,42 @@ class _ChildMainMenuState extends State<ChildMainMenu> {
                   ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Slim non-blocking banner shown when the last load hit a transport failure
+  /// (offline/timeout) — without it a network blip renders as "you have no
+  /// data". Tap (or pull down) to retry; a clean load clears it.
+  Widget _offlineBanner(BuildContext context) {
+    final palette = context.palette;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _loading = true;
+          _loadFailed = false;
+        });
+        _load();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: palette.errorBg,
+          border: Border.all(color: AppColors.dangerRed.withValues(alpha: 0.4)),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          children: [
+            const AppIcon('icon_warning', size: 20, color: AppColors.dangerRed),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text("Couldn't reach the server — pull down or tap to retry",
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+            ),
+            const SizedBox(width: 10),
+            const AppIcon('icon_refresh', size: 18, color: AppColors.dangerRed),
+          ],
+        ),
       ),
     );
   }

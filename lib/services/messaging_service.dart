@@ -152,33 +152,6 @@ class MessagingService {
     return '';
   }
 
-  // ---- Webhooks -----------------------------------------------------------
-
-  Future<WebhookSubscription?> createWebhook(String callbackUrl, String secret,
-      {String eventTypes = 'new_message'}) async {
-    final json = await _api.postJson(
-      'api/messages/webhooks',
-      CreateWebhookRequest(callbackUrl: callbackUrl, secret: secret, eventTypes: eventTypes)
-          .toJson(),
-    );
-    return json is Map<String, dynamic> ? WebhookSubscription.fromJson(json) : null;
-  }
-
-  Future<List<WebhookSubscription>> getWebhooks() async {
-    final json = await _api.getJson('api/messages/webhooks');
-    if (json is List) {
-      return json
-          .map((e) => WebhookSubscription.fromJson(e as Map<String, dynamic>))
-          .toList();
-    }
-    return [];
-  }
-
-  Future<bool> deleteWebhook(int webhookId) async {
-    final json = await _api.deleteJson('api/messages/webhooks/$webhookId');
-    return json is Map<String, dynamic> && (json['success'] as bool? ?? false);
-  }
-
   void dispose() {
     _wsSub?.cancel();
     _messageReceived.close();

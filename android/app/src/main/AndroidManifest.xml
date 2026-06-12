@@ -28,7 +28,7 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove"/>
 
     <application
-        android:label="coharmony"
+        android:label="CoHarmony"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <!-- Google Maps Android SDK key (reused from the MAUI app's secrets.xml) -->

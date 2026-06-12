@@ -127,7 +127,8 @@ class _LoginPageState extends State<LoginPage> {
     final palette = context.palette;
     return Scaffold(
       backgroundColor: palette.background,
-      resizeToAvoidBottomInset: false,
+      // resizeToAvoidBottomInset stays default (true) so the bottom-pinned
+      // Sign In button rides above the keyboard and the form scrolls.
       body: Column(
         children: [
           AppHeader(

@@ -3,6 +3,7 @@ import '../../models/custody_models.dart';
 import '../../models/financial_models.dart';
 import '../../models/schedule_models.dart';
 import '../../services/holiday_resolver.dart';
+import '../../services/live_schedule_service.dart';
 import '../../services/service_locator.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_palette.dart';
@@ -181,7 +182,7 @@ class _DateDataPageState extends State<DateDataPage> {
     if (parent == null && approved.days.isNotEmpty) {
       final dayIndex = _date.weekday % 7;
       final patternLength = approved.patternLength > 0 ? approved.patternLength : 1;
-      final week = patternLength <= 1 ? 0 : _calcWeek(_date, patternLength);
+      final week = LiveScheduleService.weekIndexFor(_date, patternLength, approved.patternAnchorDate);
       for (final d in approved.days) {
         if (d.dayIndex == dayIndex && d.weekIndex == week && d.parentAssignment != 'None') {
           parent = d.parentAssignment;
@@ -204,16 +205,6 @@ class _DateDataPageState extends State<DateDataPage> {
     }
     if (locationName?.isNotEmpty ?? false) parts.add('📍 $locationName');
     return parts.join('\n');
-  }
-
-  int _calcWeek(DateTime date, int patternLength) {
-    final today = DateTime.now();
-    final patternStart = DateTime(today.year, today.month, 1);
-    final refSunday = patternStart.subtract(Duration(days: patternStart.weekday % 7));
-    final targetSunday = DateTime(date.year, date.month, date.day).subtract(Duration(days: date.weekday % 7));
-    var weeks = targetSunday.difference(refSunday).inDays ~/ 7;
-    if (weeks < 0) weeks += ((weeks.abs() ~/ patternLength) + 1) * patternLength;
-    return weeks % patternLength;
   }
 
   // ── Payment resolution (direct + recurring charges) ──────────────────────────

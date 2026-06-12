@@ -566,11 +566,11 @@ class _SubscriptionPageState extends State<SubscriptionPage> {
       ),
     );
     if (confirm != true) return;
-    // Match MAUI: force RememberMe off so logout also wipes the saved email/password,
-    // then clear all prefs and return to landing.
+    // Match MAUI: force RememberMe off so logout also wipes the saved email/password.
+    // logout() centralizes the rest (WebSocket, push unregistration, encryption
+    // keys, Preferences.clear()) before returning to landing.
     await Preferences.setBool('RememberMe', false);
     await ServiceLocator.auth.logout();
-    await Preferences.clear();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LandingPage()),

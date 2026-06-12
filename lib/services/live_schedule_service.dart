@@ -5,8 +5,8 @@ import 'api_client.dart';
 import 'preferences.dart';
 import 'websocket_service.dart';
 
-/// Client for the live custody-schedule API (`/api/schedule/live`). Separate from
-/// CustodyProposalService — talks to the unified live editor backend.
+/// Client for the live custody-schedule API (`/api/schedule/live`) — the unified
+/// live editor backend that replaced the proposal system.
 ///
 /// Concurrency contract mirrors the server: every content edit carries the
 /// [LiveScheduleData.version] it was based on; [LiveOp.conflict] means reload, while
@@ -33,6 +33,7 @@ class LiveScheduleService {
     if (d == null) return ApprovedScheduleResponse();
     return ApprovedScheduleResponse(
       patternLength: d.patternLength,
+      patternAnchorDate: d.patternAnchorDate,
       days: [
         for (final x in d.days)
           ApprovedDayDto(
@@ -69,11 +70,6 @@ class LiveScheduleService {
       ],
     );
   }
-
-  // No proposals in the live model — always "none active". Kept so display code that
-  // used the proposal service compiles unchanged after the cutover.
-  Future<ActiveProposalResponse?> getActiveProposal() async =>
-      ActiveProposalResponse(hasActiveProposal: false);
 
   // Lightweight agreement state for the calendars' "not agreed yet" indicators.
   Future<LiveAgreement> getAgreement() async {
@@ -126,6 +122,30 @@ class LiveScheduleService {
   // Live presence: tell the server "I'm in the editor" (client calls ~every 10s while
   // open). Returns current state so it doubles as a refresh.
   Future<LiveResult> presenceHeartbeat() => _send('POST', 'presence', const {});
+
+  /// Which week of the repeating pattern [date] falls in (weeks start Sunday; matches
+  /// dayIndex 0 = Sunday everywhere). Uses the server's persistent [anchorSunday]
+  /// (`patternAnchorDate`) when present so week parity never flips at month rollovers;
+  /// falls back to the legacy transient anchor — the Sunday on/before the 1st of the
+  /// CURRENT month — for rows the backfill hasn't reached yet (matches the old
+  /// per-page computation exactly).
+  static int weekIndexFor(DateTime date, int patternLength, DateTime? anchorSunday) {
+    if (patternLength <= 1) return 0;
+    final DateTime refSunday;
+    if (anchorSunday != null) {
+      refSunday = DateTime.utc(anchorSunday.year, anchorSunday.month, anchorSunday.day);
+    } else {
+      final today = DateTime.now();
+      final patternStart = DateTime.utc(today.year, today.month, 1);
+      refSunday = patternStart.subtract(Duration(days: patternStart.weekday % 7));
+    }
+    final day = DateTime.utc(date.year, date.month, date.day);
+    final targetSunday = day.subtract(Duration(days: day.weekday % 7));
+    // UTC date-only arithmetic → the difference is an exact multiple of 7 days (no DST
+    // drift), and Dart's % is non-negative for a positive modulus, so dates before the
+    // anchor wrap correctly.
+    return (targetSunday.difference(refSunday).inDays ~/ 7) % patternLength;
+  }
 
   // ── internals ──────────────────────────────────────────────────────────────
   static String _u(String path) => path.isEmpty ? 'api/schedule/live' : 'api/schedule/live/$path';
@@ -186,11 +206,19 @@ class LiveResult {
 
 DateTime? _dt(dynamic v) => v == null ? null : DateTime.tryParse(v.toString());
 
+// Date-only parse: keep the parsed calendar components as-is (no toLocal) so a timezone
+// suffix on the wire value can never shift the date.
+DateTime? _dateOnly(dynamic v) {
+  final d = _dt(v);
+  return d == null ? null : DateTime(d.year, d.month, d.day);
+}
+
 class LiveScheduleData {
   final int liveScheduleId;
   final String emailA;
   final String emailB;
   final int patternLength;
+  final DateTime? patternAnchorDate; // persistent week-0 Sunday (date-only); null pre-backfill
   final int version;
   final String status; // "building" | "agreed"
   final String? agreedByA;
@@ -208,6 +236,7 @@ class LiveScheduleData {
     required this.emailA,
     required this.emailB,
     required this.patternLength,
+    this.patternAnchorDate,
     required this.version,
     required this.status,
     this.agreedByA,
@@ -232,6 +261,7 @@ class LiveScheduleData {
       emailA: j['emailA'] as String? ?? '',
       emailB: j['emailB'] as String? ?? '',
       patternLength: (j['patternLength'] as num?)?.toInt() ?? 1,
+      patternAnchorDate: _dateOnly(j['patternAnchorDate']),
       version: (j['version'] as num?)?.toInt() ?? 0,
       status: j['status'] as String? ?? 'building',
       agreedByA: j['agreedByA'] as String?,
@@ -266,6 +296,7 @@ class LiveScheduleData {
         emailA: emailA,
         emailB: emailB,
         patternLength: patternLength,
+        patternAnchorDate: patternAnchorDate,
         version: version,
         status: status,
         agreedByA: agreedByA,

@@ -50,8 +50,9 @@ class _ChildSettingsPageState extends State<ChildSettingsPage> {
   Future<void> _signOut() async {
     final confirm = await _confirm('Sign Out', 'Are you sure you want to sign out?', 'Yes');
     if (confirm != true || !mounted) return;
+    // AuthService.logout() centralizes the full cleanup (WebSocket, push
+    // unregistration, encryption keys, Preferences.clear()).
     await ServiceLocator.auth.logout();
-    await Preferences.clear();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LandingPage()),
@@ -72,8 +73,8 @@ class _ChildSettingsPageState extends State<ChildSettingsPage> {
       if (ok) {
         if (!mounted) return;
         await _alert('Done', 'Your account has been converted back to a normal account. You will be signed out.');
+        // Centralized cleanup (including Preferences.clear()) lives in logout().
         await ServiceLocator.auth.logout();
-        await Preferences.clear();
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const LandingPage()),

@@ -10,8 +10,8 @@ import '../map/map_page.dart';
 import '../finances/payment_tracker_page.dart';
 
 /// The main app shell — port of `AppShell.xaml`'s 5-tab TabBar
-/// (Home / Schedule / Messager / Payments / Map). Tab bodies are swapped in as
-/// each screen is ported; until then they show a labelled placeholder.
+/// (Home / Schedule / Messager / Payments / Map). All five tab bodies are
+/// fully wired.
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 

@@ -57,14 +57,6 @@ class NotificationService {
 
   bool get isInitialized => _isInitialized;
 
-  /// TODO(phase 3): acquire notification permission + APNs/FCM token via
-  /// firebase_messaging/permission_handler, then call [registerDeviceToken].
-  /// Returns false until the native push layer is wired.
-  Future<bool> initialize() async {
-    _installationId = await _getInstallationId();
-    return false;
-  }
-
   /// Registers a device token with the server (portable core of the C#
   /// RegisterWithAzureNotificationHubAsync). Called by the phase-3 push layer
   /// once it has obtained the platform token.
@@ -382,8 +374,9 @@ class NotificationService {
     return newId;
   }
 
-  /// Platform tag. TODO(phase 3): derive from the real platform at the push
-  /// layer; defaults based on the host OS.
+  /// Generic platform tag for [updateRegistration]/[getRegistrationInfo]. The
+  /// real platform ('ios'/'android') is supplied by the push layer when it
+  /// calls [registerDeviceToken]/[registerApnsAlertToken].
   String _platform() => 'flutter';
 
   static String _newGuid() {

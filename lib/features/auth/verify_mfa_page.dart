@@ -278,8 +278,15 @@ class _VerifyMfaPageState extends State<VerifyMfaPage> {
         if (mounted) Navigator.of(context).maybePop();
         break;
       case VerificationPurpose.login:
-        // Hand back to the login flow, which runs the post-auth routing.
-        widget.onComplete?.call(true);
+        if (widget.onComplete != null) {
+          // Hand back to the login flow, which runs the post-auth routing.
+          widget.onComplete!(true);
+        } else {
+          // Cold-start gate (restored session, no login page beneath us):
+          // run the post-auth routing ourselves. The server marked the email
+          // verified on success, so the router won't gate again.
+          await routeAfterAuth(context);
+        }
         break;
       case VerificationPurpose.passwordReset:
         // Carry the verified code to the reset page.

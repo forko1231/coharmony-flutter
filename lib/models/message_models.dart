@@ -2,8 +2,8 @@
 // and `WebSocketService.cs`.
 //
 // CASING IS MIXED on purpose (matches the C# [JsonPropertyName] attributes):
-//  - MessageContentResponse / WebhookSubscriptionResponse -> PascalCase keys
-//  - MarkAsRead / UnreadCount / Attachment / DeleteWebhook -> camelCase keys
+//  - MessageContentResponse -> PascalCase keys
+//  - MarkAsRead / UnreadCount / Attachment -> camelCase keys
 //  - MessageResponse -> lowercase keys (status/tonescore/suggested/messageId)
 //  - WebSocket messages -> camelCase keys
 //  - request types -> camelCase keys
@@ -66,36 +66,6 @@ class AttachmentModel {
       );
 }
 
-class WebhookSubscription {
-  WebhookSubscription({
-    this.id = 0,
-    this.userEmail = '',
-    this.callbackUrl = '',
-    this.eventTypes = '',
-    this.isActive = false,
-    this.createdAt,
-    this.lastUsedAt,
-  });
-  final int id;
-  final String userEmail;
-  final String callbackUrl;
-  final String eventTypes;
-  final bool isActive;
-  final DateTime? createdAt;
-  final DateTime? lastUsedAt;
-
-  /// PascalCase keys (WebhookSubscriptionResponse).
-  factory WebhookSubscription.fromJson(Map<String, dynamic> j) => WebhookSubscription(
-        id: (j['Id'] as num?)?.toInt() ?? 0,
-        userEmail: j['UserEmail'] as String? ?? '',
-        callbackUrl: j['CallbackUrl'] as String? ?? '',
-        eventTypes: j['EventTypes'] as String? ?? '',
-        isActive: j['IsActive'] as bool? ?? false,
-        createdAt: DateTime.tryParse(j['CreatedAt']?.toString() ?? ''),
-        lastUsedAt: DateTime.tryParse(j['LastUsedAt']?.toString() ?? ''),
-      );
-}
-
 class MessageResponse {
   MessageResponse({this.status, this.tonescore, this.suggested, this.messageId = 0});
   final String? status;
@@ -133,19 +103,6 @@ class SendMessageRequest {
     m.removeWhere((_, v) => v == null);
     return m;
   }
-}
-
-class CreateWebhookRequest {
-  CreateWebhookRequest({
-    required this.callbackUrl,
-    required this.secret,
-    this.eventTypes = 'new_message',
-  });
-  final String callbackUrl;
-  final String secret;
-  final String eventTypes;
-  Map<String, dynamic> toJson() =>
-      {'callbackUrl': callbackUrl, 'secret': secret, 'eventTypes': eventTypes};
 }
 
 // ---- WebSocket message types (camelCase) --------------------------------

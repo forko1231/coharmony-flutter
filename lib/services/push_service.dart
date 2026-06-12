@@ -42,6 +42,9 @@ class PushService {
   final NotificationService _notifications;
 
   bool _started = false;
+  // Stream subscriptions/handlers must only ever be wired once per app run,
+  // even when [init] re-runs after a logout → login (see [unregister]).
+  bool _androidListenersWired = false;
 
   // Native bridge for iOS standard APNs (alert) notifications. iOS has no Firebase here,
   // so we register for remote notifications natively and the AppDelegate hands the raw
@@ -65,25 +68,75 @@ class PushService {
       if (token != null && token.isNotEmpty) {
         await _notifications.registerDeviceToken(deviceToken: token, platform: 'android');
       }
-      messaging.onTokenRefresh.listen((t) {
-        _notifications.registerDeviceToken(deviceToken: t, platform: 'android');
-      });
 
-      // Background/killed call pushes → native full-screen incoming UI.
-      FirebaseMessaging.onBackgroundMessage(callFcmBackgroundHandler);
+      if (!_androidListenersWired) {
+        _androidListenersWired = true;
+        messaging.onTokenRefresh.listen((t) {
+          _notifications.registerDeviceToken(deviceToken: t, platform: 'android');
+        });
 
-      // Foreground messages → in-app banner (FCM doesn't show a system
-      // notification while the app is open).
-      FirebaseMessaging.onMessage.listen(_onForegroundMessage);
-      // Tapping a notification that opened/foregrounded the app → route.
-      FirebaseMessaging.onMessageOpenedApp.listen(_onMessageOpenedApp);
-      // Cold start from a notification tap.
-      final initial = await messaging.getInitialMessage();
-      if (initial != null) _onMessageOpenedApp(initial);
+        // Background/killed call pushes → native full-screen incoming UI.
+        FirebaseMessaging.onBackgroundMessage(callFcmBackgroundHandler);
+
+        // Foreground messages → in-app banner (FCM doesn't show a system
+        // notification while the app is open).
+        FirebaseMessaging.onMessage.listen(_onForegroundMessage);
+        // Tapping a notification that opened/foregrounded the app → route.
+        FirebaseMessaging.onMessageOpenedApp.listen(_onMessageOpenedApp);
+        // Cold start from a notification tap.
+        final initial = await messaging.getInitialMessage();
+        if (initial != null) _onMessageOpenedApp(initial);
+      }
     } catch (_) {
       // Push is best-effort; failure here must never block the app.
       _started = false;
     }
+  }
+
+  /// Best-effort server-side push teardown for logout. MUST run while the auth
+  /// token is still valid (the endpoint is [Authorize]d), and must never throw
+  /// or block logout — offline/failed calls are swallowed.
+  ///
+  /// The server route is `DELETE api/notifications/unregister/{registrationId}`
+  /// (NotificationsController.Unregister): it deletes the Notification Hub
+  /// installation AND the device-registration row, so the device stops
+  /// receiving the old account's pushes. The registration id we hold covers:
+  ///   • Android — the FCM registration created by [init];
+  ///   • iOS — the VoIP/PushKit registration (CallKitService.registerVoipToken
+  ///     goes through the same registerDeviceToken path and stores its id).
+  /// The iOS standard-APNs *alert* installation ("{base}-apns") never persists
+  /// its registration id client-side, so it cannot be deleted by id here; its
+  /// installation id is device-stable, so the next sign-in's registration
+  /// overwrites its user tag and pushes for the old account stop then.
+  Future<void> unregister() async {
+    try {
+      final info = await _notifications.getRegistrationInfo();
+      var regId = int.tryParse(info.registrationId) ?? 0;
+      if (regId == 0) {
+        // In-memory id is empty after a cold start; fall back to the persisted
+        // copy NotificationService keeps in secure storage.
+        final stored = await ServiceLocator.secureStorage
+            .secureRetrieve('notification_registration_id');
+        regId = int.tryParse(stored) ?? 0;
+      }
+      if (regId > 0) {
+        await ServiceLocator.api.deleteJson('api/notifications/unregister/$regId');
+      }
+    } catch (_) {
+      // Best-effort: never let push teardown break logout.
+    }
+    try {
+      // Drop the stale local registration record so the next sign-in performs
+      // a clean re-register. The installation id is intentionally KEPT — it
+      // identifies the device, not the user.
+      await ServiceLocator.secureStorage.secureRemove('notification_registration_id');
+      await ServiceLocator.secureStorage.secureRemove('notification_device_token');
+    } catch (_) {
+      // Best-effort.
+    }
+    // Let the next sign-in's dashboard init() re-register the token under the
+    // new account (listeners stay wired exactly once).
+    _started = false;
   }
 
   // iOS: standard APNs alert notifications (schedule changed, reminders, messages, …).

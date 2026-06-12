@@ -4,6 +4,12 @@
 // DefaultIgnoreCondition = WhenWritingNull).
 
 DateTime? _date(dynamic v) => v == null ? null : DateTime.tryParse(v.toString());
+// Date-only parse: keep the parsed calendar components as-is (no toLocal) so a timezone
+// suffix on the wire value can never shift the date.
+DateTime? _dateOnly(dynamic v) {
+  final d = _date(v);
+  return d == null ? null : DateTime(d.year, d.month, d.day);
+}
 double? _dbl(dynamic v) => v == null ? null : (v as num).toDouble();
 
 Map<String, dynamic> _stripNulls(Map<String, dynamic> m) {
@@ -276,10 +282,15 @@ class ProposalSummaryDto {
 class ApprovedScheduleResponse {
   ApprovedScheduleResponse({
     this.patternLength = 0,
+    this.patternAnchorDate,
     this.days = const [],
     this.overrides = const [],
   });
   final int patternLength;
+
+  /// Persistent week-0 Sunday for the repeating pattern (date-only). Null for rows the
+  /// server backfill hasn't reached yet — callers fall back to the legacy month anchor.
+  final DateTime? patternAnchorDate;
   final List<ApprovedDayDto> days;
   final List<ApprovedOverrideDto> overrides;
 
@@ -289,6 +300,7 @@ class ApprovedScheduleResponse {
   factory ApprovedScheduleResponse.fromJson(Map<String, dynamic> j) =>
       ApprovedScheduleResponse(
         patternLength: (j['patternLength'] as num?)?.toInt() ?? 0,
+        patternAnchorDate: _dateOnly(j['patternAnchorDate']),
         days: (j['days'] as List<dynamic>? ?? [])
             .map((e) => ApprovedDayDto.fromJson(e as Map<String, dynamic>))
             .toList(),

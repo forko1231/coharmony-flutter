@@ -28,7 +28,7 @@ import 'partner_page.dart';
 import 'settings_page.dart';
 
 /// Dashboard / Home — port of `Views/Main/MainMenu.xaml(.cs)`. Loads partner / lawyer /
-/// children contacts, schedule events, custody (proposal system), charges, messages and
+/// children contacts, schedule events, custody (live schedule), charges, messages and
 /// location records, then renders quick stats, a custody-shaded mini-calendar, upcoming
 /// events, a payment summary, recent conversations, co-parent status and location stats.
 class MainMenuPage extends StatefulWidget {
@@ -40,11 +40,12 @@ class MainMenuPage extends StatefulWidget {
 
 class _MainMenuPageState extends State<MainMenuPage> {
   bool _loading = true;
+  bool _loadFailed = false; // transport failure during the last load → show the banner
   String _email = '';
+  StreamSubscription<MessageReceivedEvent>? _msgSub;
 
   ApprovedScheduleResponse? _approved;
   LiveAgreement? _agreement;
-  ActiveProposalResponse? _activeProposal;
   List<ScheduleItem> _events = const [];
   List<FCharge> _monthCharges = const []; // all charges in current month (calendar borders)
   List<FCharge> _userMonthCharges = const []; // current user's charges (payment summary)
@@ -72,7 +73,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
     _load();
     ServiceLocator.push.init(); // FCM token register (Android only; no-op on iOS)
     ServiceLocator.callKit.registerVoipToken(); // iOS VoIP token register (no-op on Android)
-    ServiceLocator.messaging.onMessageReceived.listen((_) {
+    _msgSub = ServiceLocator.messaging.onMessageReceived.listen((_) {
       if (mounted) _loadMessages();
     });
     // First time on the dashboard after onboarding/subscription: prime calling
@@ -83,8 +84,23 @@ class _MainMenuPageState extends State<MainMenuPage> {
     });
   }
 
+  @override
+  void dispose() {
+    _msgSub?.cancel();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     _email = Preferences.getString('email');
+    // Track transport failures across the whole load: the fetches run
+    // concurrently, so the notifier's final value alone could be masked by a
+    // late success. Any TRUE during the load means data may be missing.
+    final net = ServiceLocator.api.hadTransportFailure;
+    var sawNetFailure = false;
+    void trackNet() {
+      if (net.value) sawNetFailure = true;
+    }
+    net.addListener(trackNet);
     await Future.wait([
       _loadPartner(),
       _loadLawyers(),
@@ -97,6 +113,8 @@ class _MainMenuPageState extends State<MainMenuPage> {
       _loadMessages(),
       _loadLocations(),
     ]);
+    net.removeListener(trackNet);
+    _loadFailed = sawNetFailure || net.value;
     if (mounted) setState(() => _loading = false);
     unawaited(_maybePostJoinSchedulePrompt());
   }
@@ -190,7 +208,6 @@ class _MainMenuPageState extends State<MainMenuPage> {
   Future<void> _loadCustody() async {
     try {
       _approved = await ServiceLocator.liveSchedule.getApprovedSchedule();
-      _activeProposal = await ServiceLocator.liveSchedule.getActiveProposal();
       _agreement = await ServiceLocator.liveSchedule.getAgreement();
     } catch (_) {}
   }
@@ -279,7 +296,7 @@ class _MainMenuPageState extends State<MainMenuPage> {
     if (days.isNotEmpty) {
       final patternLength = _approved?.patternLength ?? 1;
       final dayIndex = date.weekday % 7;
-      final week = patternLength <= 1 ? 0 : _calcWeek(date, patternLength);
+      final week = LiveScheduleService.weekIndexFor(date, patternLength, _approved?.patternAnchorDate);
       for (final d in days) {
         if (d.dayIndex == dayIndex && d.weekIndex == week) {
           return (parent: d.parentAssignment, time: d.transferTime, endTime: d.transferEndTime);
@@ -287,15 +304,6 @@ class _MainMenuPageState extends State<MainMenuPage> {
       }
     }
     return (parent: 'None', time: null, endTime: null);
-  }
-
-  int _calcWeek(DateTime date, int patternLength) {
-    final patternStart = DateTime(_now.year, _now.month, 1);
-    final refSunday = patternStart.subtract(Duration(days: patternStart.weekday % 7));
-    final targetSunday = DateTime(date.year, date.month, date.day).subtract(Duration(days: date.weekday % 7));
-    var weeks = targetSunday.difference(refSunday).inDays ~/ 7;
-    if (weeks < 0) weeks += ((weeks.abs() ~/ patternLength) + 1) * patternLength;
-    return weeks % patternLength;
   }
 
   // ── Today custody + next event ───────────────────────────────────────────────
@@ -532,6 +540,10 @@ class _MainMenuPageState extends State<MainMenuPage> {
                       padding: const EdgeInsets.fromLTRB(20, 16, 20, 100),
                       child: Column(
                         children: [
+                          if (_loadFailed) ...[
+                            _offlineBanner(context),
+                            const SizedBox(height: 16),
+                          ],
                           IntrinsicHeight(
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -568,6 +580,43 @@ class _MainMenuPageState extends State<MainMenuPage> {
   }
 
   // ── Cards ─────────────────────────────────────────────────────────────────────
+  /// Slim non-blocking banner shown when the last load hit a transport failure
+  /// (offline/timeout) — without it a network blip renders as "you have no
+  /// data". Tap (or pull down) to retry; a clean load clears it.
+  Widget _offlineBanner(BuildContext context) {
+    final palette = context.palette;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _loading = true;
+          _loadFailed = false;
+        });
+        _load();
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: palette.errorBg,
+          border: Border.all(color: AppColors.dangerRed.withValues(alpha: 0.4)),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          children: [
+            const AppIcon('icon_warning', size: 20, color: AppColors.dangerRed),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text("Couldn't reach the server — pull down or tap to retry",
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: palette.textPrimary)),
+            ),
+            const SizedBox(width: 10),
+            const AppIcon('icon_refresh', size: 18, color: AppColors.dangerRed),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _calendarCard(BuildContext context) {
     final palette = context.palette;
     return _card(
@@ -603,7 +652,6 @@ class _MainMenuPageState extends State<MainMenuPage> {
                   ],
                 ),
               ),
-              _proposalBadge(context),
               GestureDetector(
                 onTap: () => _goToTab(1),
                 child: Container(
@@ -621,35 +669,6 @@ class _MainMenuPageState extends State<MainMenuPage> {
           const SizedBox(height: 8),
           _miniMonth(context),
         ],
-      ),
-    );
-  }
-
-  /// Proposal status chip shown next to "View All" (mirrors MAUI's
-  /// ProposalIndicatorBadge): Draft (gray) / Pending (amber) for your own
-  /// proposal, Review (red) when your co-parent is awaiting your response.
-  Widget _proposalBadge(BuildContext context) {
-    final active = _activeProposal;
-    final p = active?.proposal;
-    if (active?.hasActiveProposal != true || p == null) return const SizedBox.shrink();
-
-    final String label;
-    final Color color;
-    if (p.isCurrentUserProposer) {
-      final draft = p.status == 'draft';
-      label = draft ? 'Draft' : 'Pending';
-      color = draft ? const Color(0xFF6B7280) : const Color(0xFFF59E0B);
-    } else {
-      label = 'Review';
-      color = const Color(0xFFEF4444);
-    }
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
-        child: Text(label,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
       ),
     );
   }
